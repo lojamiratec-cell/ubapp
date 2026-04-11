@@ -1,0 +1,5 @@
+{
+  "name": "Driver Lucrativo",
+  "description": "Aplicativo completo para gestão operacional e financeira de motoristas de aplicativo (Uber, 99, inDrive). Controle de turnos, custos detalhados de abastecimento e análise de performance com IA Gemini.",
+  "requestFramePermissions": []
+}

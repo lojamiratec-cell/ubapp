@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "preferredCurrency": { "type": "string", "enum": ["BRL", "USD", "EUR"] }
+      },
+      "required": ["uid", "email"]
+    },
+    "Shift": {
+      "title": "Shift",
+      "description": "A work shift for a driver",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "endTime": { "type": "string", "format": "date-time" },
+        "startKm": { "type": "number" },
+        "endKm": { "type": "number" },
+        "startAutonomy": { "type": "number" },
+        "endAutonomy": { "type": "number" },
+        "totalRevenue": { "type": "number" },
+        "totalTrips": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "paused", "finished"] },
+        "activeTimeSeconds": { "type": "number" },
+        "lastStartedAt": { "type": "string", "format": "date-time" },
+        "totalWorkKm": { "type": "number" },
+        "totalPersonalKm": { "type": "number" },
+        "lastKm": { "type": "number" }
+      },
+      "required": ["userId", "startTime", "startKm", "status", "totalWorkKm", "totalPersonalKm", "lastKm"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "A specific trip within a shift",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "shiftId": { "type": "string" },
+        "value": { "type": "number" },
+        "durationSeconds": { "type": "number" },
+        "distanceKm": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "shiftId", "value", "durationSeconds", "distanceKm"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A vehicle or work-related expense",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "category": { "type": "string", "enum": ["Manutenção", "Limpeza", "Alimentação", "Seguro", "IPVA/Licenciamento", "Multas", "Estacionamento", "Pedágio", "Internet/Celular", "Outros"] },
+        "value": { "type": "number" },
+        "kmAtExpense": { "type": "number" }
+      },
+      "required": ["userId", "date", "category", "value"]
+    },
+    "Fuel": {
+      "title": "Fuel",
+      "description": "A fuel refill record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "km": { "type": "number" },
+        "pricePerLiter": { "type": "number" },
+        "totalValue": { "type": "number" },
+        "liters": { "type": "number" }
+      },
+      "required": ["userId", "date", "km", "pricePerLiter", "totalValue"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User specific settings for calculations",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "maintenanceCostPerKm": { "type": "number" },
+        "maintenancePercentage": { "type": "number" },
+        "dailyRevenueGoal": { "type": "number" },
+        "defaultFuelPrice": { "type": "number" },
+        "avgConsumption": { "type": "number" },
+        "oilChangeInterval": { "type": "number" },
+        "lastOilChangeKm": { "type": "number" },
+        "tireRotationInterval": { "type": "number" },
+        "lastTireRotationKm": { "type": "number" },
+        "timingBeltInterval": { "type": "number" },
+        "lastTimingBeltKm": { "type": "number" }
+      },
+      "required": ["userId", "maintenanceCostPerKm", "dailyRevenueGoal"]
+    }
+  },
+  "firestore": {
+    "/settings/{userId}": {
+      "schema": "UserSettings",
+      "description": "User settings"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/shifts/{shiftId}": {
+      "schema": "Shift",
+      "description": "Driver shifts"
+    },
+    "/shifts/{shiftId}/trips/{tripId}": {
+      "schema": "Trip",
+      "description": "Trips within a shift"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Driver expenses"
+    },
+    "/fuel/{fuelId}": {
+      "schema": "Fuel",
+      "description": "Fuel refill records"
+    }
+  }
+}

@@ -1,0 +1,173 @@
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Fields:
+//   - email: string (required)
+//   - displayName: string (optional)
+//   - photoURL: string (optional)
+//   - preferredCurrency: string (required)
+//
+// Collection: shifts
+// Fields:
+//   - userId: string (required, immutable)
+//   - startTime: timestamp (required)
+//   - endTime: timestamp (optional)
+//   - startKm: number (required)
+//   - endKm: number (optional)
+//   - startAutonomy: number (required)
+//   - endAutonomy: number (optional)
+//   - avgConsumption: number (optional)
+//   - totalRevenue: number (required)
+//   - totalTrips: number (required)
+//   - status: string (required, enum: ['active', 'paused', 'finished'])
+//   - activeTimeSeconds: number (required)
+//   - lastStartedAt: timestamp (required)
+//   - totalWorkKm: number (required)
+//   - totalPersonalKm: number (required)
+//   - lastKm: number (required)
+//
+// Subcollection: shifts/{shiftId}/trips
+// Fields:
+//   - userId: string (required, immutable)
+//   - shiftId: string (required, immutable)
+//   - value: number (required)
+//   - durationSeconds: number (required)
+//   - distanceKm: number (required)
+//   - timestamp: timestamp (required)
+//
+// Collection: expenses
+// Fields:
+//   - userId: string (required, immutable)
+//   - date: timestamp (required)
+//   - category: string (required, enum: ['Manutenção', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'])
+//   - value: number (required)
+//   - kmAtExpense: number (required)
+//
+// Collection: fuel
+// Fields:
+//   - userId: string (required, immutable)
+//   - date: timestamp (required)
+//   - km: number (required)
+//   - pricePerLiter: number (required)
+//   - totalValue: number (required)
+//   - liters: number (required)
+//
+// ===============================================================
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function uidUnchanged() {
+      return !('userId' in request.resource.data) ||
+        request.resource.data.userId == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('userId' in request.resource.data) ||
+        request.resource.data.userId == resource.data.userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidShift(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.startTime is timestamp &&
+             data.startKm is number &&
+             data.totalRevenue is number &&
+             data.totalTrips is number &&
+             data.status in ['active', 'paused', 'finished'] &&
+             data.activeTimeSeconds is number &&
+             data.totalWorkKm is number &&
+             data.totalPersonalKm is number &&
+             data.lastKm is number;
+    }
+
+    function isValidTrip(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.shiftId is string && data.shiftId.size() < 100 &&
+             data.value is number &&
+             data.durationSeconds is number &&
+             data.distanceKm is number &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidExpense(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.date is timestamp &&
+             data.category in ['Manutenção', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'] &&
+             data.value is number &&
+             data.kmAtExpense is number;
+    }
+
+    function isValidFuel(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.date is timestamp &&
+             data.km is number &&
+             data.pricePerLiter is number &&
+             data.totalValue is number &&
+             data.liters is number;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /settings/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'dailyRevenueGoal', 'defaultFuelPrice', 'avgConsumption']);
+    }
+
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /shifts/{shiftId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidShift(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidShift(request.resource.data);
+
+      match /trips/{tripId} {
+        allow read, delete: if isDocOwner();
+        allow update: if isDocOwner() && uidNotModified() && isValidTrip(request.resource.data);
+        allow create: if isAuthenticated() && uidUnchanged() && isValidTrip(request.resource.data);
+      }
+    }
+
+    match /expenses/{expenseId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidExpense(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidExpense(request.resource.data);
+    }
+
+    match /fuel/{fuelId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidFuel(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidFuel(request.resource.data);
+    }
+  }
+}
