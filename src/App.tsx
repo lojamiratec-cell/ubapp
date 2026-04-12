@@ -141,6 +141,7 @@ export default function App() {
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showFuelModal, setShowFuelModal] = useState(false);
+  const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showPastShiftModal, setShowPastShiftModal] = useState(false);
   const [showEditShiftModal, setShowEditShiftModal] = useState(false);
@@ -548,6 +549,34 @@ export default function App() {
         liters: total / price
       });
       setShowFuelModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'fuel');
+    }
+  };
+
+  const addShiftFuel = async (date: Date, km: number, price: number, total: number, autonomyBefore: number, autonomyAfter: number) => {
+    if (!user || !activeShift) return;
+    try {
+      const addedAutonomy = autonomyAfter - autonomyBefore;
+      
+      await addDoc(collection(db, 'fuel'), {
+        userId: user.uid,
+        shiftId: activeShift.id,
+        date: Timestamp.fromDate(date),
+        km,
+        pricePerLiter: price,
+        totalValue: total,
+        liters: total / price,
+        autonomyBefore,
+        autonomyAfter
+      });
+
+      await updateDoc(doc(db, 'shifts', activeShift.id), {
+        addedAutonomy: (activeShift.addedAutonomy || 0) + addedAutonomy,
+        fuelExpense: (activeShift.fuelExpense || 0) + total
+      });
+
+      setShowShiftFuelModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'fuel');
     }
@@ -1054,32 +1083,32 @@ export default function App() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-24 font-sans text-gray-900 dark:text-gray-100 transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 px-6 py-4 sticky top-0 z-30 flex items-center justify-between transition-colors">
-        <div className="flex items-center gap-3">
-          <div className="bg-blue-600 p-2 rounded-xl">
-            <Car className="text-white" size={20} />
+      <header className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 px-4 sm:px-6 py-4 sticky top-0 z-30 flex items-center justify-between transition-colors">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="bg-blue-600 p-1.5 sm:p-2 rounded-xl">
+            <Car className="text-white" size={18} />
           </div>
           <div>
-            <span className="font-bold text-xl tracking-tight block">Driver Lucrativo</span>
-            <span className="text-[10px] text-gray-400 dark:text-gray-500 font-mono uppercase tracking-widest">
+            <span className="font-bold text-lg sm:text-xl tracking-tight block leading-tight">Driver Lucrativo</span>
+            <span className="text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 font-mono uppercase tracking-widest">
               {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
             </span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1 sm:gap-2">
           <button 
             onClick={() => setDarkMode(!darkMode)} 
-            className="p-2 text-gray-400 hover:text-blue-500 transition-colors"
+            className="p-1.5 sm:p-2 text-gray-400 hover:text-blue-500 transition-colors"
           >
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+            {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors">
-            <LogOut size={20} />
+          <button onClick={handleLogout} className="p-1.5 sm:p-2 text-gray-400 hover:text-red-500 transition-colors">
+            <LogOut size={18} />
           </button>
         </div>
       </header>
 
-      <main className="p-6 max-w-lg mx-auto">
+      <main className="p-6 pb-28 max-w-lg mx-auto w-full">
         <AnimatePresence mode="wait">
           {activeTab === 'operation' && (
             <motion.div 
@@ -1158,7 +1187,7 @@ export default function App() {
                   <p className="text-sm opacity-70 font-medium dark:text-gray-400">Tempo Efetivo de Trabalho</p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 mt-8">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-8">
                   <div className={cn("p-4 rounded-2xl", activeShift?.status === 'active' ? "bg-white/10" : "bg-gray-50 dark:bg-gray-800")}>
                     <p className="text-xs font-bold uppercase opacity-60 mb-1 dark:text-gray-400">Ganhos</p>
                     <p className="text-xl font-bold dark:text-white">R$ {activeShift?.totalRevenue.toFixed(2) || '0,00'}</p>
@@ -1200,7 +1229,7 @@ export default function App() {
                     </Button>
                   </>
                 ) : (
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {activeShift.status === 'active' ? (
                       <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-6" icon={Pause}>
                         Pausar
@@ -1213,6 +1242,11 @@ export default function App() {
                     <Button onClick={() => setShowFinishModal(true)} variant="danger" className="py-6" icon={Square}>
                       Finalizar
                     </Button>
+                    {activeShift.status === 'active' && (
+                      <Button onClick={() => setShowShiftFuelModal(true)} variant="outline" className="py-6 sm:col-span-2" icon={FuelIcon}>
+                        Abastecer no Turno
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1235,11 +1269,11 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               className="space-y-4"
             >
-              <div className="flex justify-between items-center mb-6">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
-                <div className="flex gap-2">
-                  <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm">Exportar</Button>
-                  <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm">Registrar</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Exportar</Button>
+                  <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Registrar</Button>
                 </div>
               </div>
               {shifts.length === 0 ? (
@@ -1276,9 +1310,9 @@ export default function App() {
                               setEditingShift(shift);
                               setShowEditShiftModal(true);
                             }}
+                            title="Editar Turno"
                           >
-                            <Plus size={18} className="rotate-45" /> {/* Using as an edit icon placeholder or similar */}
-                            <span className="text-xs ml-1">Editar</span>
+                            <Plus size={18} className="rotate-45" />
                           </Button>
                           <Button 
                             variant="ghost" 
@@ -1311,7 +1345,7 @@ export default function App() {
                               <span>Detalhes do Turno</span>
                               <span>{shift.totalTrips} Corridas</span>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
                                 <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Trabalho</p>
                                 <p className="font-bold dark:text-white">{shift.totalWorkKm?.toFixed(1) || ((shift.endKm || 0) - shift.startKm).toFixed(1)} km</p>
@@ -1380,12 +1414,12 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               className="space-y-6"
             >
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                 <h2 className="text-2xl font-bold dark:text-white">Custos</h2>
-                <div className="flex gap-2">
-                  <Button onClick={exportExpensesToCSV} disabled={expenses.length === 0 && fuelRecords.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm">Exportar</Button>
-                  <Button onClick={() => setShowFuelModal(true)} icon={FuelIcon} variant="outline" className="py-2 px-3 text-sm">Abastecer</Button>
-                  <Button onClick={() => setShowExpenseModal(true)} icon={Plus} className="py-2 px-3 text-sm">Outro</Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={exportExpensesToCSV} disabled={expenses.length === 0 && fuelRecords.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Exportar</Button>
+                  <Button onClick={() => setShowFuelModal(true)} icon={FuelIcon} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Abastecer</Button>
+                  <Button onClick={() => setShowExpenseModal(true)} icon={Plus} className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Outro</Button>
                 </div>
               </div>
 
@@ -1465,7 +1499,7 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              <div className="flex bg-white dark:bg-gray-900 p-1 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors">
+              <div className="flex flex-wrap bg-white dark:bg-gray-900 p-1 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors">
                 {(['day', 'week', 'month'] as const).map((f) => (
                   <button
                     key={f}
@@ -1490,7 +1524,7 @@ export default function App() {
               ) : (
                 <>
                   {/* Resumo do Período */}
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 transition-colors">
                       <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">Faturamento</p>
                       <p className="text-xl font-bold text-gray-900 dark:text-white">R$ {metrics.totalRevenue.toFixed(2)}</p>
@@ -1507,7 +1541,7 @@ export default function App() {
                       <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">Tempo Total</p>
                       <p className="text-xl font-bold text-gray-900 dark:text-white">{metrics.totalHours.toFixed(1)}h</p>
                     </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 col-span-2 transition-colors">
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 sm:col-span-2 transition-colors">
                       <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 text-center">Total de Viagens</p>
                       <p className="text-xl font-bold text-gray-900 dark:text-white text-center">{metrics.totalTrips}</p>
                     </div>
@@ -1517,10 +1551,10 @@ export default function App() {
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Métricas Principais</h3>
                     
-                    <Card className="flex items-center justify-between py-4">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
                           metrics.revenuePerHour >= 35 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerHour >= 25 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
                           <Clock size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
@@ -1531,17 +1565,17 @@ export default function App() {
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors",
+                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
                         metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerHour >= 35 ? "Excelente" : metrics.revenuePerHour >= 25 ? "Bom" : "Baixo"}
                       </div>
                     </Card>
 
-                    <Card className="flex items-center justify-between py-4">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
                           metrics.revenuePerKm >= 2.5 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerKm >= 1.8 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
                           <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
@@ -1552,17 +1586,17 @@ export default function App() {
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors",
+                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
                         metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerKm >= 2.5 ? "Excelente" : metrics.revenuePerKm >= 1.8 ? "Bom" : "Baixo"}
                       </div>
                     </Card>
 
-                    <Card className="flex items-center justify-between py-4">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors",
+                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
                           metrics.ticketMedio >= 15 ? "bg-green-50 dark:bg-green-900/20" : metrics.ticketMedio >= 10 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
                           <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
@@ -1573,7 +1607,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors",
+                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
                         metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.ticketMedio >= 15 ? "Excelente" : metrics.ticketMedio >= 10 ? "Bom" : "Baixo"}
@@ -1606,26 +1640,26 @@ export default function App() {
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Comparativo Mensal</h3>
                     <Card className="p-5">
-                      <div className="flex justify-between items-center mb-4">
+                      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4">
                         <div>
                           <p className="text-xs font-bold text-gray-400 uppercase">Faturamento Mensal</p>
                           <p className="text-2xl font-bold dark:text-white">R$ {monthlySummary.currentRevenue.toFixed(2)}</p>
                         </div>
                         <div className={cn(
-                          "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold",
+                          "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold self-start sm:self-auto",
                           monthlySummary.growth >= 0 ? "bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400" : "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
                         )}>
                           {monthlySummary.growth >= 0 ? <TrendingUp size={14} /> : <TrendingUp size={14} className="rotate-180" />}
                           {Math.abs(monthlySummary.growth).toFixed(1)}%
                         </div>
                       </div>
-                      <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs text-gray-500 dark:text-gray-400">
                         <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-blue-600" />
+                          <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
                           <span>Mês Atual: {monthlySummary.currentCount} turnos</span>
                         </div>
                         <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-700" />
+                          <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-700 shrink-0" />
                           <span>Mês Anterior: {monthlySummary.lastCount} turnos</span>
                         </div>
                       </div>
@@ -1634,11 +1668,11 @@ export default function App() {
 
                   {/* AI Analysis */}
                   <div className="space-y-3">
-                    <div className="flex justify-between items-center ml-1">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 ml-1">
                       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Análise Inteligente</h3>
                       <Button 
                         variant="ghost" 
-                        className="p-0 h-auto text-blue-600 text-xs font-bold flex items-center gap-1"
+                        className="p-0 h-auto text-blue-600 text-xs font-bold flex items-center gap-1 self-start sm:self-auto"
                         onClick={generateAiReport}
                         disabled={isGeneratingAi}
                       >
@@ -1758,7 +1792,7 @@ export default function App() {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 px-6 py-3 flex justify-between items-center z-40 shadow-2xl transition-colors">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 px-2 sm:px-6 py-3 flex justify-between items-center z-40 shadow-2xl transition-colors">
         <NavButton active={activeTab === 'operation'} onClick={() => setActiveTab('operation')} icon={Play} label="Turno" />
         <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={History} label="Histórico" />
         <NavButton active={activeTab === 'costs'} onClick={() => setActiveTab('costs')} icon={DollarSign} label="Custos" />
@@ -1792,6 +1826,10 @@ export default function App() {
 
       <Modal isOpen={showFuelModal} onClose={() => setShowFuelModal(false)} title="Abastecimento">
         <FuelForm onSubmit={addFuel} />
+      </Modal>
+
+      <Modal isOpen={showShiftFuelModal} onClose={() => setShowShiftFuelModal(false)} title="Abastecer no Turno">
+        <ShiftFuelForm onSubmit={addShiftFuel} />
       </Modal>
 
       <Modal isOpen={showPastShiftModal} onClose={() => setShowPastShiftModal(false)} title="Registrar Turno Passado">
@@ -1870,12 +1908,12 @@ function NavButton({ active, onClick, icon: Icon, label }: { active: boolean, on
     <button 
       onClick={onClick}
       className={cn(
-        "flex flex-col items-center gap-1 transition-all duration-300",
+        "flex flex-col items-center gap-1 transition-all duration-300 px-1 sm:px-2",
         active ? "text-blue-600 scale-110" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
       )}
     >
-      <Icon size={24} strokeWidth={active ? 2.5 : 2} />
-      <span className="text-[10px] font-bold uppercase tracking-widest">{label}</span>
+      <Icon size={22} className="sm:w-6 sm:h-6" strokeWidth={active ? 2.5 : 2} />
+      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest">{label}</span>
       {active && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-blue-600 rounded-full mt-0.5" />}
     </button>
   );
@@ -1896,7 +1934,7 @@ function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
-        className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-8 shadow-2xl transition-colors"
+        className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl transition-colors"
       >
         <div className="w-12 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-8 sm:hidden" />
         <h3 className="text-2xl font-bold mb-8 tracking-tight dark:text-white">{title}</h3>
@@ -1912,7 +1950,7 @@ function StartShiftForm({ onSubmit }: { onSubmit: (km: number, autonomy: number)
   const [km, setKm] = useState('');
   const [autonomy, setAutonomy] = useState('');
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Input label="KM Total do Painel" type="number" value={km} onChange={e => setKm(e.target.value)} placeholder="Ex: 45000" />
       <Input label="Autonomia Restante (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} placeholder="Ex: 185" />
       <Button onClick={() => onSubmit(Number(km), Number(autonomy))} className="w-full py-4">Iniciar Agora</Button>
@@ -1925,7 +1963,7 @@ function PauseShiftForm({ onSubmit, currentRevenue }: { onSubmit: (revenue: numb
   const [km, setKm] = useState('');
   const [autonomy, setAutonomy] = useState('');
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Input label="Faturamento Parcial (R$)" type="number" value={revenue} onChange={e => setRevenue(e.target.value)} />
       <Input label="KM Atual" type="number" value={km} onChange={e => setKm(e.target.value)} />
       <Input label="Autonomia Restante (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
@@ -1943,7 +1981,7 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
     return (
       <div className="space-y-6">
         <p className="text-gray-600 dark:text-gray-400 font-medium">O veículo rodou durante a pausa?</p>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Button variant="outline" onClick={() => setMoved(false)}>Não</Button>
           <Button onClick={() => setMoved(true)}>Sim</Button>
         </div>
@@ -1976,8 +2014,8 @@ function FinishShiftForm({ onSubmit, currentRevenue }: { onSubmit: (km: number, 
   const [revenue, setRevenue] = useState(currentRevenue.toString());
   const [trips, setTrips] = useState('');
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="KM Final" type="number" value={km} onChange={e => setKm(e.target.value)} />
         <Input label="Autonomia Final (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
       </div>
@@ -2003,7 +2041,7 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
   const categories = ['Manutenção', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Input label="Data e Hora" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
       <Select label="Categoria" options={categories} value={category} onChange={e => setCategory(e.target.value as Expense['category'])} />
       <Input label="Valor (R$)" type="number" value={value} onChange={e => setValue(e.target.value)} />
@@ -2022,13 +2060,50 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
         ) : (
           <div className="bg-red-50 p-4 rounded-2xl space-y-4 border border-red-100">
             <p className="text-sm text-red-700 font-medium text-center">Excluir este registro permanentemente?</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Button variant="outline" onClick={() => setShowConfirmDelete(false)} className="w-full">Cancelar</Button>
               <Button onClick={onDelete} variant="danger" className="w-full">Sim, Excluir</Button>
             </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ShiftFuelForm({ onSubmit }: { 
+  onSubmit: (date: Date, km: number, price: number, total: number, autonomyBefore: number, autonomyAfter: number) => void
+}) {
+  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [km, setKm] = useState('');
+  const [autonomyBefore, setAutonomyBefore] = useState('');
+  const [price, setPrice] = useState('');
+  const [total, setTotal] = useState('');
+  const [autonomyAfter, setAutonomyAfter] = useState('');
+
+  return (
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+      <Input label="Data e Hora" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Input label="KM do Painel" type="number" value={km} onChange={e => setKm(e.target.value)} />
+        <Input label="Autonomia ANTES (KM)" type="number" value={autonomyBefore} onChange={e => setAutonomyBefore(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Input label="Preço/Litro (R$)" type="number" step="0.01" value={price} onChange={e => setPrice(e.target.value)} />
+        <Input label="Valor Total (R$)" type="number" value={total} onChange={e => setTotal(e.target.value)} />
+      </div>
+      <Input label="Autonomia DEPOIS (KM)" type="number" value={autonomyAfter} onChange={e => setAutonomyAfter(e.target.value)} />
+      
+      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl">
+        <p className="text-xs text-blue-600 dark:text-blue-400 font-bold uppercase">Litros Estimados</p>
+        <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+          {Number(price) > 0 ? (Number(total) / Number(price)).toFixed(2) : '0.00'} L
+        </p>
+      </div>
+      
+      <Button onClick={() => onSubmit(new Date(date), Number(km), Number(price), Number(total), Number(autonomyBefore), Number(autonomyAfter))} className="w-full py-4">
+        Registrar Abastecimento
+      </Button>
     </div>
   );
 }
@@ -2045,10 +2120,10 @@ function FuelForm({ onSubmit, initialData, onDelete }: {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Input label="Data e Hora" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
       <Input label="KM do Painel" type="number" value={km} onChange={e => setKm(e.target.value)} />
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="Preço/Litro (R$)" type="number" step="0.01" value={price} onChange={e => setPrice(e.target.value)} />
         <Input label="Valor Total (R$)" type="number" value={total} onChange={e => setTotal(e.target.value)} />
       </div>
@@ -2072,7 +2147,7 @@ function FuelForm({ onSubmit, initialData, onDelete }: {
         ) : (
           <div className="bg-red-50 p-4 rounded-2xl space-y-4 border border-red-100">
             <p className="text-sm text-red-700 font-medium text-center">Excluir este registro permanentemente?</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Button variant="outline" onClick={() => setShowConfirmDelete(false)} className="w-full">Cancelar</Button>
               <Button onClick={onDelete} variant="danger" className="w-full">Sim, Excluir</Button>
             </div>
@@ -2099,11 +2174,11 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
 
   return (
     <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="Início" type="datetime-local" value={start} onChange={e => setStart(e.target.value)} />
         <Input label="Fim" type="datetime-local" value={end} onChange={e => setEnd(e.target.value)} />
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="KM Inicial" type="number" value={startKm} onChange={e => setStartKm(e.target.value)} />
         <Input label="KM Final" type="number" value={endKm} onChange={e => setEndKm(e.target.value)} />
       </div>
@@ -2124,7 +2199,7 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
         ) : (
           <div className="bg-red-50 p-4 rounded-2xl space-y-4 border border-red-100">
             <p className="text-sm text-red-700 font-medium text-center">Tem certeza que deseja excluir este turno? Esta ação não pode ser desfeita.</p>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Button variant="outline" onClick={() => setShowConfirmDelete(false)} className="w-full">Cancelar</Button>
               <Button onClick={onDelete} variant="danger" className="w-full">Sim, Excluir</Button>
             </div>
@@ -2138,10 +2213,11 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
 function TripBatchForm({ shift, existingTripsCount, onSubmit }: { 
   shift: Shift, 
   existingTripsCount: number,
-  onSubmit: (trips: { value: number, durationSeconds: number, distanceKm: number }[]) => void 
+  onSubmit: (trips: { value: number, durationSeconds: number, distanceKm: number }[]) => Promise<void> | void 
 }) {
   const remainingTrips = Math.max(0, shift.totalTrips - existingTripsCount);
   const [trips, setTrips] = useState(Array(remainingTrips).fill({ value: '', durationMin: '', durationSec: '', distance: '' }));
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const updateTrip = (index: number, field: string, val: string) => {
     const newTrips = [...trips];
@@ -2176,7 +2252,7 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
               onChange={e => updateTrip(i, 'value', e.target.value)} 
               placeholder="Ex: 9.80"
             />
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input 
                 label="Tempo (Min)" 
                 type="number" 
@@ -2205,14 +2281,22 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
       ))}
 
       <Button 
-        onClick={() => onSubmit(trips.map(t => ({ 
-          value: Number(t.value), 
-          durationSeconds: (Number(t.durationMin) * 60) + Number(t.durationSec),
-          distanceKm: Number(t.distance)
-        })))} 
+        disabled={isSubmitting}
+        onClick={async () => {
+          setIsSubmitting(true);
+          try {
+            await onSubmit(trips.map(t => ({ 
+              value: Number(t.value), 
+              durationSeconds: (Number(t.durationMin) * 60) + Number(t.durationSec),
+              distanceKm: Number(t.distance)
+            })));
+          } finally {
+            setIsSubmitting(false);
+          }
+        }} 
         className="w-full py-4 sticky bottom-0 shadow-lg"
       >
-        Salvar {remainingTrips} Corridas
+        {isSubmitting ? 'Salvando...' : `Salvar ${remainingTrips} Corridas`}
       </Button>
     </div>
   );
@@ -2232,7 +2316,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
   const [beltLast, setBeltLast] = useState((settings.lastTimingBeltKm || 0).toString());
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Card className="space-y-6">
         <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Geral</h3>
         <Input label="Custo de Manutenção (% do Faturamento)" type="number" step="1" value={maintPerc} onChange={e => setMaintPerc(e.target.value)} placeholder="Ex: 10" />
@@ -2246,7 +2330,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         
         <div className="space-y-4">
           <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Troca de Óleo</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={oilInt} onChange={e => setOilInt(e.target.value)} />
             <Input label="Última Troca (KM)" type="number" value={oilLast} onChange={e => setOilLast(e.target.value)} />
           </div>
@@ -2254,7 +2338,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
 
         <div className="space-y-4">
           <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Rodízio de Pneus</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={tireInt} onChange={e => setTireInt(e.target.value)} />
             <Input label="Último Rodízio (KM)" type="number" value={tireLast} onChange={e => setTireLast(e.target.value)} />
           </div>
@@ -2262,7 +2346,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
 
         <div className="space-y-4">
           <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Correia Dentada</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={beltInt} onChange={e => setBeltInt(e.target.value)} />
             <Input label="Última Troca (KM)" type="number" value={beltLast} onChange={e => setBeltLast(e.target.value)} />
           </div>

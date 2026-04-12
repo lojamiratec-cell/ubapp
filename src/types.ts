@@ -11,6 +11,8 @@ export interface Shift {
   endKm?: number;
   startAutonomy: number; // KM remaining in tank
   endAutonomy?: number; // KM remaining in tank
+  addedAutonomy?: number; // Autonomy added during the shift via fueling
+  fuelExpense?: number; // Total fuel expense during the shift
   avgConsumption?: number; // KM/L average from dashboard
   totalRevenue: number;
   totalTrips: number;
@@ -49,6 +51,9 @@ export interface Fuel {
   pricePerLiter: number;
   totalValue: number;
   liters: number;
+  shiftId?: string;
+  autonomyBefore?: number;
+  autonomyAfter?: number;
 }
 
 export interface UserSettings {
