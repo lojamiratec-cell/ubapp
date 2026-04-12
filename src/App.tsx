@@ -8,7 +8,7 @@ import {
   Play, Pause, Square, History, DollarSign, BarChart3, 
   Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, 
   TrendingUp, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon,
-  Settings as SettingsIcon, Sun, Moon, Download, FileText
+  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -51,14 +51,18 @@ const Button = ({
   variant = 'primary', 
   className,
   disabled,
-  icon: Icon
+  icon: Icon,
+  type = 'button',
+  title
 }: { 
   children: React.ReactNode, 
   onClick?: (e: React.MouseEvent) => void, 
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline',
   className?: string,
   disabled?: boolean,
-  icon?: any
+  icon?: any,
+  type?: 'button' | 'submit' | 'reset',
+  title?: string
 }) => {
   const variants = {
     primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/20",
@@ -70,6 +74,8 @@ const Button = ({
 
   return (
     <button 
+      type={type}
+      title={title}
       onClick={onClick}
       disabled={disabled}
       className={cn(
@@ -147,18 +153,41 @@ export default function App() {
   const [showEditShiftModal, setShowEditShiftModal] = useState(false);
   const [showEditExpenseModal, setShowEditExpenseModal] = useState(false);
   const [showEditFuelModal, setShowEditFuelModal] = useState(false);
+  const [showEditTripModal, setShowEditTripModal] = useState(false);
+  const [editingTrip, setEditingTrip] = useState<{shiftId: string, trip: Trip} | null>(null);
   const [tripToDelete, setTripToDelete] = useState<{shiftId: string, tripId: string} | null>(null);
+  const [shiftToDeleteAllTrips, setShiftToDeleteAllTrips] = useState<string | null>(null);
   const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
+  const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
   const [shiftTrips, setShiftTrips] = useState<Record<string, Trip[]>>({});
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingFuel, setEditingFuel] = useState<Fuel | null>(null);
   
+  const groupedShifts = useMemo(() => {
+    const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number }> = {};
+    shifts.forEach(shift => {
+      const date = shift.startTime?.toDate() || new Date();
+      const dateKey = format(date, 'yyyy-MM-dd');
+      if (!groups[dateKey]) {
+        groups[dateKey] = { date, shifts: [], totalRevenue: 0, totalTime: 0 };
+      }
+      groups[dateKey].shifts.push(shift);
+      groups[dateKey].totalRevenue += shift.totalRevenue;
+      groups[dateKey].totalTime += shift.activeTimeSeconds;
+    });
+    return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [shifts]);
+
+  const toggleDay = (dateKey: string) => {
+    setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
+  };
+
   // AI State
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [insightFilter, setInsightFilter] = useState<'day' | 'week' | 'month'>('day');
+  const [insightFilter, setInsightFilter] = useState<'day' | 'week' | 'month'>('month');
 
   useEffect(() => {
     if (darkMode) {
@@ -687,6 +716,17 @@ export default function App() {
     }
   };
 
+  const updateTrip = async (shiftId: string, tripId: string, data: Partial<Trip>) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'shifts', shiftId, 'trips', tripId), data);
+      setShowEditTripModal(false);
+      setEditingTrip(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `shifts/${shiftId}/trips/${tripId}`);
+    }
+  };
+
   const deleteTrip = async (shiftId: string, tripId: string) => {
     if (!user) return;
     try {
@@ -709,6 +749,23 @@ export default function App() {
       handleFirestoreError(err, OperationType.WRITE, `settings/${user.uid}`);
     }
   };
+  const deleteAllTrips = async (shiftId: string) => {
+    if (!user) return;
+    try {
+      const tripsRef = collection(db, 'shifts', shiftId, 'trips');
+      const q = query(tripsRef, where('userId', '==', user.uid));
+      const tripsSnap = await getDocs(q);
+      
+      if (!tripsSnap.empty) {
+        const batch = writeBatch(db);
+        tripsSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `shifts/${shiftId}/trips`);
+    }
+  };
+
   const deleteShift = async (id: string) => {
     if (!user) return;
     try {
@@ -736,6 +793,10 @@ export default function App() {
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
+      const recentGroups = groupedShifts.slice(0, 7).map(g => {
+        return `${format(g.date, 'dd/MM/yyyy')}: R$ ${g.totalRevenue.toFixed(2)} em ${formatTime(g.totalTime)} (${g.shifts.length} turnos)`;
+      }).join('\n        ');
+
       const prompt = `
         Atue como um especialista em performance para motoristas de aplicativo. 
         Analise os seguintes dados do período (${insightFilter}):
@@ -750,6 +811,16 @@ export default function App() {
         - Ticket Médio: R$ ${metrics.ticketMedio.toFixed(2)}
         - Custos Estimados: R$ ${metrics.totalCosts.toFixed(2)}
         - Lucro Estimado: R$ ${metrics.netProfit.toFixed(2)}
+        
+        Dados de Manutenção (Últimos 30 dias):
+        - Reserva Ideal (${costsMetrics.maintenancePercentage}%): R$ ${costsMetrics.maintenanceReserve.toFixed(2)}
+        - Gasto com Pneus: R$ ${costsMetrics.spentOnTires.toFixed(2)}
+        - Gasto com Óleo: R$ ${costsMetrics.spentOnOil.toFixed(2)}
+        - Gasto com Mecânica: R$ ${costsMetrics.spentOnMaintenance.toFixed(2)}
+        - Saldo da Reserva: R$ ${costsMetrics.reserveBalance.toFixed(2)}
+
+        Resumo dos últimos dias trabalhados:
+        ${recentGroups}
         
         Siga exatamente este formato de resposta (estilo ChatGPT direto e "na lata"):
         
@@ -813,11 +884,27 @@ export default function App() {
   }, [shifts]);
 
   const maintenanceAlerts = useMemo(() => {
-    if (!settings || shifts.length === 0) return [];
+    if (!settings) return [];
     
-    const lastShift = shifts.filter(s => s.status === 'finished').sort((a, b) => b.startTime.toMillis() - a.startTime.toMillis())[0];
-    const currentKm = lastShift?.endKm || 0;
+    let currentKm = 0;
+    if (activeShift?.lastKm) {
+      currentKm = Math.max(currentKm, activeShift.lastKm);
+    }
+    if (shifts.length > 0) {
+      const maxShiftKm = Math.max(...shifts.map(s => s.endKm || s.startKm || 0));
+      currentKm = Math.max(currentKm, maxShiftKm);
+    }
+    if (fuelRecords.length > 0) {
+      const maxFuelKm = Math.max(...fuelRecords.map(f => f.km));
+      currentKm = Math.max(currentKm, maxFuelKm);
+    }
+    if (expenses.length > 0) {
+      const maxExpenseKm = Math.max(...expenses.map(e => e.kmAtExpense || 0));
+      currentKm = Math.max(currentKm, maxExpenseKm);
+    }
     
+    if (currentKm === 0) return [];
+
     const alerts = [];
     
     // Oil Change
@@ -948,6 +1035,36 @@ export default function App() {
       dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0
     };
   }, [shifts, expenses, fuelRecords, insightFilter, settings]);
+
+  const costsMetrics = useMemo(() => {
+    const now = new Date();
+    const thirtyDaysAgo = subDays(now, 30);
+    
+    const last30DaysShifts = shifts.filter(s => s.status === 'finished' && s.startTime.toDate() >= thirtyDaysAgo);
+    const last30DaysExpenses = expenses.filter(e => e.date.toDate() >= thirtyDaysAgo);
+    
+    const totalRevenue30Days = last30DaysShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
+    const maintenancePercentage = settings?.maintenancePercentage ?? 10;
+    const maintenanceReserve = totalRevenue30Days * (maintenancePercentage / 100);
+    
+    const spentOnTires = last30DaysExpenses.filter(e => e.category === 'Pneus').reduce((acc, e) => acc + e.value, 0);
+    const spentOnOil = last30DaysExpenses.filter(e => e.category === 'Óleo').reduce((acc, e) => acc + e.value, 0);
+    const spentOnMaintenance = last30DaysExpenses.filter(e => e.category === 'Manutenção').reduce((acc, e) => acc + e.value, 0);
+    
+    const totalSpentOnCar = spentOnTires + spentOnOil + spentOnMaintenance;
+    const reserveBalance = maintenanceReserve - totalSpentOnCar;
+
+    return {
+      totalRevenue30Days,
+      maintenanceReserve,
+      spentOnTires,
+      spentOnOil,
+      spentOnMaintenance,
+      totalSpentOnCar,
+      reserveBalance,
+      maintenancePercentage
+    };
+  }, [shifts, expenses, settings]);
 
   const chartData = useMemo(() => {
     const finishedShifts = shifts
@@ -1120,50 +1237,6 @@ export default function App() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              {/* Maintenance Alerts */}
-              {maintenanceAlerts.length > 0 && (
-                <div className="space-y-3">
-                  {maintenanceAlerts.map(alert => (
-                    <motion.div
-                      key={alert.id}
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={cn(
-                        "p-4 rounded-2xl border flex items-center gap-4 transition-colors",
-                        alert.severity === 'critical' 
-                          ? "bg-red-50 border-red-100 dark:bg-red-900/20 dark:border-red-800" 
-                          : "bg-amber-50 border-amber-100 dark:bg-amber-900/20 dark:border-amber-800"
-                      )}
-                    >
-                      <div className={cn(
-                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
-                        alert.severity === 'critical' ? "bg-red-100 dark:bg-red-800" : "bg-amber-100 dark:bg-amber-800"
-                      )}>
-                        <AlertCircle size={20} className={alert.severity === 'critical' ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex justify-between items-baseline mb-1">
-                          <p className={cn("font-bold text-sm", alert.severity === 'critical' ? "text-red-900 dark:text-red-100" : "text-amber-900 dark:text-amber-100")}>
-                            {alert.title}
-                          </p>
-                          <span className="text-[10px] font-bold uppercase opacity-60 dark:text-white">{alert.message}</span>
-                        </div>
-                        <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${alert.progress}%` }}
-                            className={cn(
-                              "h-full rounded-full",
-                              alert.severity === 'critical' ? "bg-red-500" : "bg-amber-500"
-                            )}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-
               <Card className={cn(
                 "relative overflow-hidden transition-all duration-500",
                 activeShift?.status === 'active' ? "bg-blue-600 text-white" : "bg-white dark:bg-gray-900"
@@ -1261,6 +1334,51 @@ export default function App() {
                   </div>
                 </Card>
               )}
+
+              {/* Maintenance Alerts */}
+              {maintenanceAlerts.length > 0 && (
+                <div className="space-y-3 mt-8">
+                  <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">Avisos de Manutenção</h3>
+                  {maintenanceAlerts.map(alert => (
+                    <motion.div
+                      key={alert.id}
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className={cn(
+                        "p-4 rounded-2xl border flex items-center gap-4 transition-colors",
+                        alert.severity === 'critical' 
+                          ? "bg-red-50 border-red-100 dark:bg-red-900/20 dark:border-red-800" 
+                          : "bg-amber-50 border-amber-100 dark:bg-amber-900/20 dark:border-amber-800"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
+                        alert.severity === 'critical' ? "bg-red-100 dark:bg-red-800" : "bg-amber-100 dark:bg-amber-800"
+                      )}>
+                        <AlertCircle size={20} className={alert.severity === 'critical' ? "text-red-600 dark:text-red-400" : "text-amber-600 dark:text-amber-400"} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex justify-between items-baseline mb-1">
+                          <p className={cn("font-bold text-sm", alert.severity === 'critical' ? "text-red-900 dark:text-red-100" : "text-amber-900 dark:text-amber-100")}>
+                            {alert.title}
+                          </p>
+                          <span className="text-[10px] font-bold uppercase opacity-60 dark:text-white">{alert.message}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${alert.progress}%` }}
+                            className={cn(
+                              "h-full rounded-full",
+                              alert.severity === 'critical' ? "bg-red-500" : "bg-amber-500"
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -1284,125 +1402,184 @@ export default function App() {
                   <p>Nenhum turno registrado ainda.</p>
                 </div>
               ) : (
-                shifts.map(shift => (
-                  <Card key={shift.id} className="hover:border-blue-200 transition-colors cursor-pointer group p-0 overflow-hidden">
-                    <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
-                      <div className="flex justify-between items-center">
+                groupedShifts.map(group => {
+                  const dateKey = format(group.date, 'yyyy-MM-dd');
+                  const isExpanded = !!expandedDays[dateKey]; // Default to collapsed
+                  return (
+                    <div key={dateKey} className="space-y-3 mb-8">
+                      <div 
+                        className="flex justify-between items-end mb-2 px-1 cursor-pointer group"
+                        onClick={() => toggleDay(dateKey)}
+                      >
                         <div>
-                          <p className="text-sm font-bold text-gray-400 uppercase tracking-wider">
-                            {format(shift.startTime?.toDate() || new Date(), "EEEE, d 'de' MMMM", { locale: ptBR })}
+                          <p className="text-lg font-bold dark:text-white capitalize flex items-center gap-2">
+                            {format(group.date, "EEEE, d 'de' MMMM", { locale: ptBR })}
+                            <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
                           </p>
-                          <div className="flex items-center gap-4 mt-2">
-                            <div className="flex items-center gap-1 text-gray-900 dark:text-white font-bold">
-                              <DollarSign size={16} className="text-green-500" />
-                              R$ {shift.totalRevenue.toFixed(2)}
-                            </div>
-                            <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400 font-medium">
-                              <Clock size={16} />
-                              {formatTime(shift.activeTimeSeconds)}
-                            </div>
+                          <div className="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400 font-medium mt-1">
+                            <span className="flex items-center gap-1"><Clock size={14} /> {formatTime(group.totalTime)}</span>
+                            <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
+                            <span className="flex items-center gap-1 text-green-600 dark:text-green-400"><DollarSign size={14} /> R$ {group.totalRevenue.toFixed(2)}</span>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button 
-                            variant="ghost" 
-                            className="p-2 text-blue-500" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingShift(shift);
-                              setShowEditShiftModal(true);
-                            }}
-                            title="Editar Turno"
-                          >
-                            <Plus size={18} className="rotate-45" />
-                          </Button>
-                          <Button 
-                            variant="ghost" 
-                            className="p-2" 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedShiftId(shift.id);
-                              setShowTripModal(true);
-                            }}
-                          >
-                            <Plus size={20} />
-                          </Button>
-                          <motion.div animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}>
-                            <ChevronRight className="text-gray-300 group-hover:text-blue-500 transition-colors" />
-                          </motion.div>
                         </div>
                       </div>
-                    </div>
-                    
-                    <AnimatePresence>
-                      {expandedShiftId === shift.id && (
-                        <motion.div 
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800 transition-colors"
-                        >
-                          <div className="p-4 space-y-3">
-                            <div className="flex justify-between text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
-                              <span>Detalhes do Turno</span>
-                              <span>{shift.totalTrips} Corridas</span>
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Trabalho</p>
-                                <p className="font-bold dark:text-white">{shift.totalWorkKm?.toFixed(1) || ((shift.endKm || 0) - shift.startKm).toFixed(1)} km</p>
-                              </div>
-                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Pessoal</p>
-                                <p className="font-bold dark:text-white">{shift.totalPersonalKm?.toFixed(1) || '0.0'} km</p>
-                              </div>
-                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / Hora</p>
-                                <p className="font-bold dark:text-white">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</p>
-                              </div>
-                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Consumo Médio</p>
-                                <p className="font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} km/L</p>
-                              </div>
-                            </div>
-                            
-                            {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
-                              <div className="space-y-2 mt-4">
-                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Lista de Corridas</p>
-                                {shiftTrips[shift.id].map(trip => {
-                                  const mins = Math.floor(trip.durationSeconds / 60);
-                                  const secs = trip.durationSeconds % 60;
-                                  return (
-                                    <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 p-2 rounded-lg text-sm border border-gray-100 dark:border-gray-800 transition-colors">
-                                      <div className="flex items-center gap-2">
-                                        <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                        <span className="font-medium dark:text-white">R$ {trip.value.toFixed(2)}</span>
-                                      </div>
-                                      <div className="flex items-center gap-3 text-gray-400 text-xs">
-                                        <span>{mins}m {secs}s</span>
-                                        <span className="w-1 h-1 bg-gray-200 rounded-full" />
-                                        <span>{trip.distanceKm?.toFixed(2)} km</span>
-                                        <button 
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            setTripToDelete({ shiftId: shift.id, tripId: trip.id });
-                                          }}
-                                          className="ml-2 p-1 hover:text-red-500 transition-colors"
-                                        >
-                                          <Plus size={14} className="rotate-45" />
-                                        </button>
+                      
+                      <AnimatePresence>
+                        {isExpanded && (
+                          <motion.div
+                            initial={{ height: 0, opacity: 0 }}
+                            animate={{ height: 'auto', opacity: 1 }}
+                            exit={{ height: 0, opacity: 0 }}
+                            className="space-y-3 overflow-hidden"
+                          >
+                            {group.shifts.map((shift, index) => (
+                              <Card key={shift.id} className="hover:border-blue-200 transition-colors cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500">
+                                <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
+                                  <div className="flex justify-between items-center">
+                                    <div>
+                                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                                        Turno {group.shifts.length - index}
+                                      </p>
+                                      <div className="flex items-center gap-4 mt-2">
+                                        <div className="flex items-center gap-1 text-gray-900 dark:text-white font-bold">
+                                          <DollarSign size={16} className="text-green-500" />
+                                          R$ {shift.totalRevenue.toFixed(2)}
+                                        </div>
+                                        <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400 font-medium">
+                                          <Clock size={16} />
+                                          {formatTime(shift.activeTimeSeconds)}
+                                        </div>
                                       </div>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </Card>
-                ))
+                                    <div className="flex items-center gap-2">
+                                      <Button 
+                                        variant="ghost" 
+                                        className="p-2 text-blue-500" 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setEditingShift(shift);
+                                          setShowEditShiftModal(true);
+                                        }}
+                                        title="Editar Turno"
+                                      >
+                                        <Plus size={18} className="rotate-45" />
+                                      </Button>
+                                      <Button 
+                                        variant="ghost" 
+                                        className="p-2" 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedShiftId(shift.id);
+                                          setShowTripModal(true);
+                                        }}
+                                      >
+                                        <Plus size={20} />
+                                      </Button>
+                                      <motion.div animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}>
+                                        <ChevronRight className="text-gray-300 group-hover/card:text-blue-500 transition-colors" />
+                                      </motion.div>
+                                    </div>
+                                  </div>
+                                </div>
+                                
+                                <AnimatePresence>
+                                  {expandedShiftId === shift.id && (
+                                    <motion.div 
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: 'auto', opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      className="bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800 transition-colors"
+                                    >
+                                      <div className="p-4 space-y-3">
+                                        <div className="flex justify-between text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
+                                          <span>Detalhes do Turno</span>
+                                          <span>{shift.totalTrips} Corridas</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Trabalho</p>
+                                            <p className="font-bold dark:text-white">{shift.totalWorkKm?.toFixed(1) || ((shift.endKm || 0) - shift.startKm).toFixed(1)} km</p>
+                                          </div>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / KM</p>
+                                            <p className="font-bold dark:text-white">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</p>
+                                          </div>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / Hora</p>
+                                            <p className="font-bold dark:text-white">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</p>
+                                          </div>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Consumo Médio</p>
+                                            <p className="font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} km/L</p>
+                                          </div>
+                                        </div>
+                                        
+                                        {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
+                                          <div className="space-y-2 mt-4">
+                                            <div className="flex justify-between items-center">
+                                              <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Lista de Corridas</p>
+                                              <button 
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setShiftToDeleteAllTrips(shift.id);
+                                                }}
+                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors"
+                                              >
+                                                Apagar Todas
+                                              </button>
+                                            </div>
+                                            {shiftTrips[shift.id].map(trip => {
+                                              const mins = Math.floor(trip.durationSeconds / 60);
+                                              const secs = trip.durationSeconds % 60;
+                                              return (
+                                                <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 p-2 rounded-lg text-sm border border-gray-100 dark:border-gray-800 transition-colors">
+                                                  <div className="flex items-center gap-2">
+                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                                    <span className="font-medium dark:text-white">R$ {trip.value.toFixed(2)}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-3 text-gray-400 text-xs">
+                                                    <span>{mins}m {secs}s</span>
+                                                    <span className="w-1 h-1 bg-gray-200 rounded-full" />
+                                                    <span>{trip.distanceKm?.toFixed(2)} km</span>
+                                                    <div className="flex items-center">
+                                                      <button 
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setEditingTrip({ shiftId: shift.id, trip });
+                                                          setShowEditTripModal(true);
+                                                        }}
+                                                        className="p-1 hover:text-blue-500 transition-colors"
+                                                      >
+                                                        <Edit2 size={14} />
+                                                      </button>
+                                                      <button 
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setTripToDelete({ shiftId: shift.id, tripId: trip.id });
+                                                        }}
+                                                        className="p-1 hover:text-red-500 transition-colors"
+                                                      >
+                                                        <Plus size={14} className="rotate-45" />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </Card>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  );
+                })
               )}
             </motion.div>
           )}
@@ -1421,6 +1598,52 @@ export default function App() {
                   <Button onClick={() => setShowFuelModal(true)} icon={FuelIcon} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Abastecer</Button>
                   <Button onClick={() => setShowExpenseModal(true)} icon={Plus} className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Outro</Button>
                 </div>
+              </div>
+
+              {/* Maintenance Reserve 30 Days */}
+              <div className="space-y-3">
+                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Resumo de Manutenção (Últimos 30 Dias)</h3>
+                <Card className="bg-gradient-to-br from-gray-900 to-gray-800 text-white border-none shadow-xl overflow-hidden relative">
+                  <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <SettingsIcon size={64} />
+                  </div>
+                  <div className="relative z-10 space-y-4">
+                    <div className="flex justify-between items-end">
+                      <div>
+                        <p className="text-sm text-gray-400 font-medium mb-1">Reserva Ideal ({costsMetrics.maintenancePercentage}% do Faturamento)</p>
+                        <p className="text-3xl font-bold">R$ {costsMetrics.maintenanceReserve.toFixed(2)}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-3 gap-2 pt-4 border-t border-white/10">
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-bold">Pneus</p>
+                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnTires.toFixed(2)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-bold">Óleo</p>
+                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnOil.toFixed(2)}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-gray-400 uppercase font-bold">Mecânica</p>
+                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnMaintenance.toFixed(2)}</p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 flex justify-between items-center">
+                      <span className="text-sm text-gray-300">Saldo da Reserva</span>
+                      <span className={cn(
+                        "text-lg font-bold px-3 py-1 rounded-full",
+                        costsMetrics.reserveBalance >= 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
+                      )}>
+                        {costsMetrics.reserveBalance >= 0 ? '+' : ''}R$ {costsMetrics.reserveBalance.toFixed(2)}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-2">
+                      * O saldo positivo significa que você gastou menos do que o previsto com manutenção nos últimos 30 dias. Guarde esse valor para o futuro.
+                    </p>
+                  </div>
+                </Card>
               </div>
 
               {fuelRecords.length > 0 && (
@@ -1920,6 +2143,38 @@ export default function App() {
           </div>
         </div>
       </Modal>
+
+      <Modal isOpen={!!shiftToDeleteAllTrips} onClose={() => setShiftToDeleteAllTrips(null)} title="Excluir Todas as Corridas">
+        <div className="space-y-6">
+          <p className="text-gray-600 dark:text-gray-400 text-center">
+            Tem certeza que deseja excluir <strong>todas</strong> as corridas detalhadas deste turno? Esta ação não pode ser desfeita.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button variant="outline" onClick={() => setShiftToDeleteAllTrips(null)} className="w-full">Cancelar</Button>
+            <Button 
+              onClick={() => {
+                if (shiftToDeleteAllTrips) {
+                  deleteAllTrips(shiftToDeleteAllTrips);
+                  setShiftToDeleteAllTrips(null);
+                }
+              }} 
+              variant="danger" 
+              className="w-full"
+            >
+              Sim, Excluir Todas
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showEditTripModal} onClose={() => { setShowEditTripModal(false); setEditingTrip(null); }} title="Editar Corrida">
+        {editingTrip && (
+          <TripForm 
+            initialData={editingTrip.trip}
+            onSubmit={(data) => updateTrip(editingTrip.shiftId, editingTrip.trip.id, data)}
+          />
+        )}
+      </Modal>
     </div>
   );
 }
@@ -2061,7 +2316,7 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
   const [km, setKm] = useState(initialData ? initialData.kmAtExpense.toString() : '');
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
-  const categories = ['Manutenção', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'];
+  const categories = ['Manutenção', 'Pneus', 'Óleo', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'];
 
   return (
     <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
@@ -2229,6 +2484,75 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function TripForm({ initialData, onSubmit }: { 
+  initialData: Trip,
+  onSubmit: (data: { value: number, durationSeconds: number, distanceKm: number }) => Promise<void> | void 
+}) {
+  const [value, setValue] = useState(initialData.value.toString());
+  const [durationMin, setDurationMin] = useState(Math.floor(initialData.durationSeconds / 60).toString());
+  const [durationSec, setDurationSec] = useState((initialData.durationSeconds % 60).toString());
+  const [distance, setDistance] = useState(initialData.distanceKm.toString());
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  return (
+    <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
+      <div className="grid grid-cols-1 gap-4">
+        <Input 
+          label="Valor (R$)" 
+          type="number" 
+          step="0.01"
+          value={value} 
+          onChange={e => setValue(e.target.value)} 
+          placeholder="Ex: 9.80"
+        />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Input 
+            label="Tempo (Min)" 
+            type="number" 
+            value={durationMin} 
+            onChange={e => setDurationMin(e.target.value)} 
+            placeholder="0"
+          />
+          <Input 
+            label="Tempo (Seg)" 
+            type="number" 
+            value={durationSec} 
+            onChange={e => setDurationSec(e.target.value)} 
+            placeholder="0"
+          />
+        </div>
+        <Input 
+          label="Distância (KM)" 
+          type="number" 
+          step="0.01"
+          value={distance} 
+          onChange={e => setDistance(e.target.value)} 
+          placeholder="Ex: 1.25"
+        />
+      </div>
+
+      <Button 
+        disabled={isSubmitting}
+        onClick={async () => {
+          setIsSubmitting(true);
+          try {
+            await onSubmit({ 
+              value: Number(value), 
+              durationSeconds: (Number(durationMin) * 60) + Number(durationSec),
+              distanceKm: Number(distance)
+            });
+          } finally {
+            setIsSubmitting(false);
+          }
+        }} 
+        className="w-full py-4"
+      >
+        {isSubmitting ? 'Salvando...' : 'Atualizar Corrida'}
+      </Button>
     </div>
   );
 }

@@ -38,7 +38,7 @@ export interface Expense {
   id: string;
   userId: string;
   date: Timestamp;
-  category: 'Manutenção' | 'Limpeza' | 'Alimentação' | 'Seguro' | 'IPVA/Licenciamento' | 'Multas' | 'Estacionamento' | 'Pedágio' | 'Internet/Celular' | 'Outros';
+  category: 'Manutenção' | 'Pneus' | 'Óleo' | 'Limpeza' | 'Alimentação' | 'Seguro' | 'IPVA/Licenciamento' | 'Multas' | 'Estacionamento' | 'Pedágio' | 'Internet/Celular' | 'Outros';
   value: number;
   kmAtExpense: number;
 }
