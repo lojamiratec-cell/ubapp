@@ -147,6 +147,7 @@ export default function App() {
   const [showEditShiftModal, setShowEditShiftModal] = useState(false);
   const [showEditExpenseModal, setShowEditExpenseModal] = useState(false);
   const [showEditFuelModal, setShowEditFuelModal] = useState(false);
+  const [tripToDelete, setTripToDelete] = useState<{shiftId: string, tripId: string} | null>(null);
   const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const [shiftTrips, setShiftTrips] = useState<Record<string, Trip[]>>({});
@@ -712,7 +713,8 @@ export default function App() {
     if (!user) return;
     try {
       const tripsRef = collection(db, 'shifts', id, 'trips');
-      const tripsSnap = await getDocs(tripsRef);
+      const q = query(tripsRef, where('userId', '==', user.uid));
+      const tripsSnap = await getDocs(q);
       
       if (!tripsSnap.empty) {
         const batch = writeBatch(db);
@@ -1383,9 +1385,7 @@ export default function App() {
                                         <button 
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            if (confirm('Excluir esta corrida?')) {
-                                              deleteTrip(shift.id, trip.id);
-                                            }
+                                            setTripToDelete({ shiftId: shift.id, tripId: trip.id });
                                           }}
                                           className="ml-2 p-1 hover:text-red-500 transition-colors"
                                         >
@@ -1896,6 +1896,29 @@ export default function App() {
             }} 
           />
         )}
+      </Modal>
+
+      <Modal isOpen={!!tripToDelete} onClose={() => setTripToDelete(null)} title="Excluir Corrida">
+        <div className="space-y-6">
+          <p className="text-gray-600 dark:text-gray-400 text-center">
+            Tem certeza que deseja excluir esta corrida? Esta ação não pode ser desfeita.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Button variant="outline" onClick={() => setTripToDelete(null)} className="w-full">Cancelar</Button>
+            <Button 
+              onClick={() => {
+                if (tripToDelete) {
+                  deleteTrip(tripToDelete.shiftId, tripToDelete.tripId);
+                  setTripToDelete(null);
+                }
+              }} 
+              variant="danger" 
+              className="w-full"
+            >
+              Sim, Excluir
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
