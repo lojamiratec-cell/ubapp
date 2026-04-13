@@ -63,6 +63,7 @@ export interface UserSettings {
   dailyRevenueGoal: number;
   defaultFuelPrice: number;
   avgConsumption: number;
+  geminiApiKey?: string;
   // Maintenance Intervals
   oilChangeInterval: number;
   lastOilChangeKm: number;

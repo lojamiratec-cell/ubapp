@@ -164,6 +164,7 @@ export default function App() {
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingFuel, setEditingFuel] = useState<Fuel | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   
   const groupedShifts = useMemo(() => {
     const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number }> = {};
@@ -337,37 +338,88 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  const exportShiftsToCSV = () => {
-    if (shifts.length === 0) return;
+  const exportShiftsToCSV = async () => {
+    if (shifts.length === 0 || !user) return;
+    
+    setIsExporting(true);
+    try {
+      const allTrips: Record<string, Trip[]> = {};
+      
+      for (const shift of shifts) {
+        try {
+          const qTrips = query(
+            collection(db, 'shifts', shift.id, 'trips'),
+            where('userId', '==', user.uid),
+            orderBy('timestamp', 'asc')
+          );
+          const snap = await getDocs(qTrips);
+          allTrips[shift.id] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trip));
+        } catch (err) {
+          console.error(`Error fetching trips for shift ${shift.id}`, err);
+          allTrips[shift.id] = [];
+        }
+      }
 
-    const headers = ['Data', 'Início', 'Fim', 'Faturamento (R$)', 'Tempo Ativo', 'KM Inicial', 'KM Final', 'KM Trabalho', 'KM Pessoal', 'Consumo (KM/L)'];
-    const rows = shifts.map(s => [
-      format(s.startTime?.toDate() || new Date(), 'dd/MM/yyyy'),
-      format(s.startTime?.toDate() || new Date(), 'HH:mm'),
-      s.endTime ? format(s.endTime.toDate(), 'HH:mm') : '--',
-      s.totalRevenue.toFixed(2),
-      formatTime(s.activeTimeSeconds),
-      s.startKm,
-      s.endKm || '--',
-      s.totalWorkKm?.toFixed(1) || '--',
-      s.totalPersonalKm?.toFixed(1) || '--',
-      s.avgConsumption?.toFixed(1) || '--'
-    ]);
+      const headers = [
+        'Data do Turno', 'Início do Turno', 'Fim do Turno', 'Faturamento do Turno (R$)', 'Tempo Ativo do Turno', 
+        'KM Inicial do Turno', 'KM Final do Turno', 'KM Trabalho do Turno', 'KM Pessoal do Turno', 'Consumo (KM/L)',
+        'Data da Corrida', 'Hora da Corrida', 'Valor da Corrida (R$)', 'Duração da Corrida', 'Distância da Corrida (KM)'
+      ];
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(r => r.join(','))
-    ].join('\n');
+      const rows: string[][] = [];
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `historico_turnos_${format(new Date(), 'yyyy-MM-dd')}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      shifts.forEach(s => {
+        const shiftDate = format(s.startTime?.toDate() || new Date(), 'dd/MM/yyyy');
+        const shiftStart = format(s.startTime?.toDate() || new Date(), 'HH:mm');
+        const shiftEnd = s.endTime ? format(s.endTime.toDate(), 'HH:mm') : '--';
+        const shiftRev = s.totalRevenue.toFixed(2);
+        const shiftTime = formatTime(s.activeTimeSeconds);
+        const shiftStartKm = s.startKm.toString();
+        const shiftEndKm = s.endKm?.toString() || '--';
+        const shiftWorkKm = s.totalWorkKm?.toFixed(1) || '--';
+        const shiftPersonalKm = s.totalPersonalKm?.toFixed(1) || '--';
+        const shiftCons = s.avgConsumption?.toFixed(1) || '--';
+
+        const trips = allTrips[s.id] || [];
+        
+        if (trips.length === 0) {
+          rows.push([
+            shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
+            shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons,
+            '--', '--', '--', '--', '--'
+          ]);
+        } else {
+          trips.forEach(t => {
+            rows.push([
+              shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
+              shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons,
+              format(t.timestamp?.toDate() || new Date(), 'dd/MM/yyyy'),
+              format(t.timestamp?.toDate() || new Date(), 'HH:mm'),
+              t.value.toFixed(2),
+              formatTime(t.durationSeconds),
+              t.distanceKm.toFixed(1)
+            ]);
+          });
+        }
+      });
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map(r => r.map(cell => `"${cell}"`).join(','))
+      ].join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `historico_turnos_${format(new Date(), 'yyyy-MM-dd')}.csv`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const exportExpensesToCSV = () => {
@@ -791,10 +843,23 @@ export default function App() {
     if (!user || !metrics) return;
     setIsGeneratingAi(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+      const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKeyToUse) {
+        setAiReport("Chave API do Gemini não encontrada. Configure-a na aba Ajustes para usar no celular.");
+        setIsGeneratingAi(false);
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey: apiKeyToUse });
 
-      const recentGroups = groupedShifts.slice(0, 7).map(g => {
-        return `${format(g.date, 'dd/MM/yyyy')}: R$ ${g.totalRevenue.toFixed(2)} em ${formatTime(g.totalTime)} (${g.shifts.length} turnos)`;
+      const viagensPorHora = metrics.totalHours > 0 ? (metrics.totalTrips / metrics.totalHours).toFixed(2) : '0.00';
+
+      const recentGroups = groupedShifts.slice(0, 14).map(g => {
+        const turnosInfo = g.shifts.map(s => {
+          const hour = s.startTime.toDate().getHours();
+          const periodo = hour < 12 ? 'Manhã' : hour < 18 ? 'Tarde' : 'Noite';
+          return `${periodo} (R$ ${s.totalRevenue.toFixed(2)})`;
+        }).join(', ');
+        return `${format(g.date, 'dd/MM')}: R$ ${g.totalRevenue.toFixed(2)} em ${formatTime(g.totalTime)} | Turnos: ${turnosInfo}`;
       }).join('\n        ');
 
       const prompt = `
@@ -803,49 +868,24 @@ export default function App() {
         
         - Faturamento: R$ ${metrics.totalRevenue.toFixed(2)}
         - KM Rodados (Trabalho): ${metrics.totalKmWork.toFixed(2)} km
-        - KM Rodados (Pessoal): ${metrics.totalKmPersonal.toFixed(2)} km
         - Tempo Total: ${metrics.totalHours.toFixed(2)} horas
         - Qtd Viagens: ${metrics.totalTrips}
         - R$/Hora: R$ ${metrics.revenuePerHour.toFixed(2)}
+        - Viagens/Hora: ${viagensPorHora}
         - R$/KM: R$ ${metrics.revenuePerKm.toFixed(2)}
         - Ticket Médio: R$ ${metrics.ticketMedio.toFixed(2)}
-        - Custos Estimados: R$ ${metrics.totalCosts.toFixed(2)}
-        - Lucro Estimado: R$ ${metrics.netProfit.toFixed(2)}
         
-        Dados de Manutenção (Últimos 30 dias):
-        - Reserva Ideal (${costsMetrics.maintenancePercentage}%): R$ ${costsMetrics.maintenanceReserve.toFixed(2)}
-        - Gasto com Pneus: R$ ${costsMetrics.spentOnTires.toFixed(2)}
-        - Gasto com Óleo: R$ ${costsMetrics.spentOnOil.toFixed(2)}
-        - Gasto com Mecânica: R$ ${costsMetrics.spentOnMaintenance.toFixed(2)}
-        - Saldo da Reserva: R$ ${costsMetrics.reserveBalance.toFixed(2)}
-
-        Resumo dos últimos dias trabalhados:
+        Resumo dos dias trabalhados:
         ${recentGroups}
         
-        Siga exatamente este formato de resposta (estilo ChatGPT direto e "na lata"):
+        Faça uma análise estratégica avaliando o R$/hora, média de viagens por hora e R$/km.
+        Analise também os turnos trabalhados, indicando os melhores horários e dias até o momento.
         
-        ANÁLISE DIRETA
-        O que aconteceu: [Descreva o padrão detectado, ex: muitas corridas curtas e baratas que tomaram muito tempo]
-        
-        POR QUE SEU RESULTADO FICOU [BOM/RUIM]:
-        [Explique a relação entre R$/km e R$/hora]
-        
-        TRADUZINDO NA PRÁTICA:
-        [Explique se ele perdeu dinheiro no KM ou no TEMPO]
-        
-        ERRO ESTRATÉGICO (SE HOUVER):
-        [Aponte o erro principal, ex: aceitar corrida pelo valor sem olhar o tempo]
-        
-        REGRA DE OURO PARA VOCÊ:
-        [Dê uma regra prática para o próximo turno]
-        
-        FOCO PARA PRÓXIMO TURNO:
-        1) [Dica 1]
-        2) [Dica 2]
-        
-        RESPOSTA DIRETA:
-        Foi bom? [Sim/Não]
-        O problema? [Causa principal]
+        REGRAS IMPORTANTES:
+        - A resposta DEVE ter NO MÁXIMO 500 caracteres. Seja muito conciso.
+        - Seja extremamente direto e estratégico.
+        - Use formatação em Markdown (negrito para números importantes).
+        - Não use saudações.
       `;
 
       const response = await ai.models.generateContent({
@@ -856,7 +896,7 @@ export default function App() {
       setAiReport(response.text || "Não foi possível gerar o relatório.");
     } catch (err) {
       console.error(err);
-      setAiReport("Erro ao conectar com a IA. Verifique sua chave API.");
+      setAiReport("Erro ao conectar com a IA. Verifique sua chave API nos Ajustes.");
     } finally {
       setIsGeneratingAi(false);
     }
@@ -1035,6 +1075,20 @@ export default function App() {
       dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0
     };
   }, [shifts, expenses, fuelRecords, insightFilter, settings]);
+
+  const todayMetrics = useMemo(() => {
+    const now = new Date();
+    const todayShifts = shifts.filter(s => isSameDay(s.startTime.toDate(), now));
+    
+    const totalRevenue = todayShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
+    const totalTime = todayShifts.filter(s => s.id !== activeShift?.id).reduce((acc, s) => acc + s.activeTimeSeconds, 0) + (activeShift ? elapsedTime : 0);
+    const totalTrips = todayShifts.reduce((acc, s) => acc + s.totalTrips, 0);
+    
+    const sortedTodayShifts = [...todayShifts].sort((a, b) => a.startTime.toMillis() - b.startTime.toMillis());
+    const startKm = sortedTodayShifts.length > 0 ? sortedTodayShifts[0].startKm : 0;
+
+    return { totalRevenue, totalTime, totalTrips, startKm, shiftCount: todayShifts.length };
+  }, [shifts, activeShift, elapsedTime]);
 
   const costsMetrics = useMemo(() => {
     const now = new Date();
@@ -1277,20 +1331,43 @@ export default function App() {
                   <div className="mt-8 space-y-2">
                     <div className="flex justify-between text-xs font-bold uppercase opacity-70 dark:text-gray-400">
                       <span>Meta Diária</span>
-                      <span>{Math.min(100, ((activeShift?.totalRevenue || 0) / settings.dailyRevenueGoal) * 100).toFixed(0)}%</span>
+                      <span>{Math.min(100, (todayMetrics.totalRevenue / settings.dailyRevenueGoal) * 100).toFixed(0)}%</span>
                     </div>
                     <div className={cn("h-2 rounded-full overflow-hidden", activeShift?.status === 'active' ? "bg-white/20" : "bg-gray-100 dark:bg-gray-800")}>
                       <motion.div 
                         initial={{ width: 0 }}
-                        animate={{ width: `${Math.min(100, ((activeShift?.totalRevenue || 0) / settings.dailyRevenueGoal) * 100)}%` }}
+                        animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / settings.dailyRevenueGoal) * 100)}%` }}
                         className={cn("h-full", activeShift?.status === 'active' ? "bg-white" : "bg-blue-600")}
                       />
                     </div>
                     <p className="text-[10px] opacity-60 text-center dark:text-gray-500">
-                      Faltam R$ {Math.max(0, settings.dailyRevenueGoal - (activeShift?.totalRevenue || 0)).toFixed(2)} para bater a meta de R$ {settings.dailyRevenueGoal}
+                      Faltam R$ {Math.max(0, settings.dailyRevenueGoal - todayMetrics.totalRevenue).toFixed(2)} para bater a meta de R$ {settings.dailyRevenueGoal}
                     </p>
                   </div>
                 )}
+              </Card>
+
+              {/* Resumo do Dia */}
+              <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
+                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">Resumo de Hoje</h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Ganhos do Dia</p>
+                    <p className="text-lg font-bold text-green-600 dark:text-green-400">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Tempo Total</p>
+                    <p className="text-lg font-bold dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Corridas Feitas</p>
+                    <p className="text-lg font-bold dark:text-white">{todayMetrics.totalTrips}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Inicial do Dia</p>
+                    <p className="text-lg font-bold dark:text-white">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
+                  </div>
+                </div>
               </Card>
 
               <div className="grid grid-cols-1 gap-4">
@@ -1392,7 +1469,9 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Exportar</Button>
+                  <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
+                    {isExporting ? 'Exportando...' : 'Exportar'}
+                  </Button>
                   <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Registrar</Button>
                 </div>
               </div>
@@ -1496,6 +1575,14 @@ export default function App() {
                                           <span>{shift.totalTrips} Corridas</span>
                                         </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Inicial</p>
+                                            <p className="font-bold dark:text-white">{shift.startKm} km</p>
+                                          </div>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Final</p>
+                                            <p className="font-bold dark:text-white">{shift.endKm || shift.lastKm || '--'} km</p>
+                                          </div>
                                           <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
                                             <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Trabalho</p>
                                             <p className="font-bold dark:text-white">{shift.totalWorkKm?.toFixed(1) || ((shift.endKm || 0) - shift.startKm).toFixed(1)} km</p>
@@ -2654,6 +2741,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
   const [goal, setGoal] = useState(settings.dailyRevenueGoal.toString());
   const [fuel, setFuel] = useState(settings.defaultFuelPrice.toString());
   const [cons, setCons] = useState(settings.avgConsumption.toString());
+  const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey || '');
   
   const [oilInt, setOilInt] = useState((settings.oilChangeInterval || 10000).toString());
   const [oilLast, setOilLast] = useState((settings.lastOilChangeKm || 0).toString());
@@ -2670,6 +2758,14 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         <Input label="Meta de Faturamento Diário (R$)" type="number" value={goal} onChange={e => setGoal(e.target.value)} placeholder="Ex: 250" />
         <Input label="Preço Médio do Combustível (R$)" type="number" step="0.01" value={fuel} onChange={e => setFuel(e.target.value)} placeholder="Ex: 5.50" />
         <Input label="Consumo Médio do Carro (KM/L)" type="number" step="0.1" value={cons} onChange={e => setCons(e.target.value)} placeholder="Ex: 12.0" />
+      </Card>
+
+      <Card className="space-y-6">
+        <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Inteligência Artificial</h3>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          Para usar a análise de IA no seu celular (fora do AI Studio), você precisa gerar uma chave gratuita no Google AI Studio e colar aqui.
+        </p>
+        <Input label="Chave API do Gemini (Opcional)" type="password" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} placeholder="AIzaSy..." />
       </Card>
 
       <Card className="space-y-6">
@@ -2706,6 +2802,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
           dailyRevenueGoal: Number(goal),
           defaultFuelPrice: Number(fuel),
           avgConsumption: Number(cons),
+          geminiApiKey: geminiKey,
           oilChangeInterval: Number(oilInt),
           lastOilChangeKm: Number(oilLast),
           tireRotationInterval: Number(tireInt),

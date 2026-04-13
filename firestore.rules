@@ -119,7 +119,7 @@ service cloud.firestore {
     function isValidExpense(data) {
       return data.userId is string && data.userId.size() < 100 &&
              data.date is timestamp &&
-             data.category in ['Manutenção', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'] &&
+             data.category in ['Manutenção', 'Pneus', 'Óleo', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'] &&
              data.value is number &&
              data.kmAtExpense is number;
     }
@@ -139,7 +139,7 @@ service cloud.firestore {
 
     match /settings/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'dailyRevenueGoal', 'defaultFuelPrice', 'avgConsumption']);
+      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'maintenancePercentage', 'dailyRevenueGoal', 'defaultFuelPrice', 'avgConsumption', 'geminiApiKey', 'oilChangeInterval', 'lastOilChangeKm', 'tireRotationInterval', 'lastTireRotationKm', 'timingBeltInterval', 'lastTimingBeltKm']);
     }
 
     match /users/{userId} {
