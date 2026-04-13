@@ -8,7 +8,7 @@ import {
   Play, Pause, Square, History, DollarSign, BarChart3, 
   Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, 
   TrendingUp, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon,
-  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2
+  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -165,6 +165,11 @@ export default function App() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingFuel, setEditingFuel] = useState<Fuel | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [showImportPreviewModal, setShowImportPreviewModal] = useState(false);
+  const [parsedImportData, setParsedImportData] = useState<any[] | null>(null);
+  const [importText, setImportText] = useState('');
+  const [isImportingData, setIsImportingData] = useState(false);
   
   const groupedShifts = useMemo(() => {
     const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number }> = {};
@@ -337,6 +342,138 @@ export default function App() {
   };
 
   const handleLogout = () => signOut(auth);
+
+  const handleImportData = async () => {
+    if (!user || !importText.trim()) return;
+    
+    const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
+    if (!apiKeyToUse) {
+      alert("Chave API do Gemini não encontrada. Configure-a na aba Ajustes.");
+      return;
+    }
+
+    setIsImportingData(true);
+    try {
+      const ai = new GoogleGenAI({ apiKey: apiKeyToUse });
+      
+      const prompt = `
+Você é um especialista em extração de dados. O usuário colou o seguinte texto contendo dados de turnos e corridas de um aplicativo de motorista.
+O texto pode estar no formato CSV exportado pelo app ou em texto livre estruturado.
+
+Sua tarefa é analisar esse texto e retornar um JSON estrito contendo um array de turnos.
+Cada turno deve ter o seguinte formato exato (tipos de dados são importantes):
+[
+  {
+    "startTime": "YYYY-MM-DDTHH:mm:ssZ", // Data e hora de início do turno (ISO 8601)
+    "endTime": "YYYY-MM-DDTHH:mm:ssZ", // Data e hora de fim do turno (ISO 8601)
+    "startKm": 10000, // Número
+    "endKm": 10150, // Número
+    "totalWorkKm": 150, // Número
+    "totalPersonalKm": 0, // Número
+    "totalRevenue": 250.50, // Número (Faturamento total do turno)
+    "activeTimeSeconds": 28800, // Número (Tempo ativo em segundos)
+    "avgConsumption": 10.5, // Número (Consumo médio, opcional, use 0 se não tiver)
+    "trips": [ // Array de corridas daquele turno
+      {
+        "timestamp": "YYYY-MM-DDTHH:mm:ssZ", // Data e hora da corrida
+        "distanceKm": 15.2, // Número
+        "durationSeconds": 1200, // Número
+        "value": 35.00 // Número
+      }
+    ]
+  }
+]
+
+Regras:
+1. Agrupe as corridas que pertencem ao mesmo turno. Se o CSV tiver várias linhas para o mesmo turno (mesma data/hora de início), agrupe-as em um único objeto de turno, colocando as corridas no array "trips".
+2. Se não houver dados de corridas detalhadas, retorne o array "trips" vazio [].
+3. Calcule ou extraia os valores corretamente.
+4. Retorne APENAS o JSON válido, sem formatação markdown (sem \`\`\`json), sem explicações adicionais.
+
+Dados fornecidos pelo usuário:
+${importText}
+      `;
+
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+      });
+
+      let jsonStr = response.text || "[]";
+      // Remove markdown formatting if present
+      jsonStr = jsonStr.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
+      
+      const parsedShifts = JSON.parse(jsonStr);
+      
+      if (!Array.isArray(parsedShifts)) {
+        throw new Error("O formato retornado não é um array válido.");
+      }
+
+      setParsedImportData(parsedShifts);
+      setShowImportModal(false);
+      setShowImportPreviewModal(true);
+    } catch (error) {
+      console.error("Erro ao importar dados:", error);
+      alert("Ocorreu um erro ao analisar os dados. Verifique o formato e tente novamente.");
+    } finally {
+      setIsImportingData(false);
+    }
+  };
+
+  const confirmImportData = async () => {
+    if (!user || !parsedImportData) return;
+    setIsImportingData(true);
+    try {
+      const batch = writeBatch(db);
+      
+      for (const shiftData of parsedImportData) {
+        const shiftRef = doc(collection(db, 'shifts'));
+        const shiftDoc = {
+          userId: user.uid,
+          startTime: Timestamp.fromDate(new Date(shiftData.startTime)),
+          endTime: shiftData.endTime ? Timestamp.fromDate(new Date(shiftData.endTime)) : null,
+          status: 'finished',
+          startKm: Number(shiftData.startKm) || 0,
+          endKm: Number(shiftData.endKm) || 0,
+          lastKm: Number(shiftData.endKm) || Number(shiftData.startKm) || 0,
+          totalWorkKm: Number(shiftData.totalWorkKm) || 0,
+          totalPersonalKm: Number(shiftData.totalPersonalKm) || 0,
+          totalRevenue: Number(shiftData.totalRevenue) || 0,
+          activeTimeSeconds: Number(shiftData.activeTimeSeconds) || 0,
+          totalTrips: Array.isArray(shiftData.trips) ? shiftData.trips.length : 0,
+          avgConsumption: Number(shiftData.avgConsumption) || 0,
+        };
+        
+        batch.set(shiftRef, shiftDoc);
+
+        if (Array.isArray(shiftData.trips)) {
+          for (const tripData of shiftData.trips) {
+            const tripRef = doc(collection(db, 'shifts', shiftRef.id, 'trips'));
+            const tripDoc = {
+              userId: user.uid,
+              shiftId: shiftRef.id,
+              timestamp: Timestamp.fromDate(new Date(tripData.timestamp)),
+              distanceKm: Number(tripData.distanceKm) || 0,
+              durationSeconds: Number(tripData.durationSeconds) || 0,
+              value: Number(tripData.value) || 0,
+            };
+            batch.set(tripRef, tripDoc);
+          }
+        }
+      }
+
+      await batch.commit();
+      setShowImportPreviewModal(false);
+      setParsedImportData(null);
+      setImportText('');
+      alert("Dados importados com sucesso!");
+    } catch (error) {
+      console.error("Erro ao salvar dados importados:", error);
+      alert("Ocorreu um erro ao salvar os dados.");
+    } finally {
+      setIsImportingData(false);
+    }
+  };
 
   const exportShiftsToCSV = async () => {
     if (shifts.length === 0 || !user) return;
@@ -1469,6 +1606,9 @@ export default function App() {
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
                 <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
                 <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
+                    Importar
+                  </Button>
                   <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
                     {isExporting ? 'Exportando...' : 'Exportar'}
                   </Button>
@@ -2144,6 +2284,76 @@ export default function App() {
 
       <Modal isOpen={showPastShiftModal} onClose={() => setShowPastShiftModal(false)} title="Registrar Turno Passado">
         <PastShiftForm onSubmit={addPastShift} />
+      </Modal>
+
+      <Modal isOpen={showImportModal} onClose={() => setShowImportModal(false)} title="Importar Histórico">
+        <div className="space-y-4">
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-200">
+            <p className="font-bold mb-2">Como importar seus dados:</p>
+            <p className="mb-2">Cole na caixa abaixo os dados dos seus turnos anteriores. A inteligência artificial do app vai ler o texto e cadastrar tudo automaticamente.</p>
+            <p><strong>Dica:</strong> Se você exportou os dados deste app anteriormente, basta abrir o arquivo CSV, copiar todo o conteúdo e colar aqui. O formato será reconhecido perfeitamente!</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Dados para Importação</label>
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white h-48 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
+              placeholder="Cole seus dados aqui..."
+            />
+          </div>
+          <Button 
+            onClick={handleImportData} 
+            disabled={isImportingData || !importText.trim()} 
+            className="w-full py-4"
+          >
+            {isImportingData ? 'Analisando Dados...' : 'Analisar e Importar'}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showImportPreviewModal} onClose={() => setShowImportPreviewModal(false)} title="Pré-visualização da Importação">
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            A inteligência artificial encontrou <strong>{parsedImportData?.length || 0}</strong> turnos. Verifique os dados abaixo antes de salvar.
+          </p>
+          <div className="max-h-96 overflow-y-auto space-y-3">
+            {parsedImportData?.map((shift, index) => (
+              <div key={index} className="bg-gray-50 dark:bg-gray-800 p-3 rounded-lg text-sm border border-gray-100 dark:border-gray-700">
+                <div className="flex justify-between font-bold mb-2">
+                  <span className="dark:text-white">{format(new Date(shift.startTime), 'dd/MM/yyyy')}</span>
+                  <span className="text-green-600 dark:text-green-400">R$ {Number(shift.totalRevenue).toFixed(2)}</span>
+                </div>
+                <div className="text-gray-600 dark:text-gray-400 grid grid-cols-2 gap-2 text-xs">
+                  <span>Início: {format(new Date(shift.startTime), 'HH:mm')}</span>
+                  <span>Fim: {shift.endTime ? format(new Date(shift.endTime), 'HH:mm') : '--'}</span>
+                  <span>KM Rodado: {shift.totalWorkKm} km</span>
+                  <span>Corridas: {shift.trips?.length || 0}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 pt-2">
+            <Button 
+              onClick={() => {
+                setShowImportPreviewModal(false);
+                setShowImportModal(true);
+              }} 
+              variant="outline" 
+              className="flex-1"
+              disabled={isImportingData}
+            >
+              Voltar
+            </Button>
+            <Button 
+              onClick={confirmImportData} 
+              disabled={isImportingData} 
+              className="flex-1"
+            >
+              {isImportingData ? 'Salvando...' : 'Confirmar e Salvar'}
+            </Button>
+          </div>
+        </div>
       </Modal>
 
       <Modal isOpen={showEditShiftModal} onClose={() => { setShowEditShiftModal(false); setEditingShift(null); }} title="Editar Turno">

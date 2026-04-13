@@ -1,6 +1,6 @@
 {
-  "name": "DriverOps",
-  "short_name": "DriverOps",
+  "name": "Driver Lucrativo",
+  "short_name": "Driver Lucrativo",
   "description": "Gestão profissional para motoristas de aplicativo",
   "start_url": "/",
   "display": "standalone",
@@ -8,12 +8,12 @@
   "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "https://picsum.photos/seed/driverops/192/192",
+      "src": "/logo.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "https://picsum.photos/seed/driverops/512/512",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png"
     }
