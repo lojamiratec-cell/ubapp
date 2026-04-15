@@ -1,6 +1,7 @@
 import { Timestamp } from 'firebase/firestore';
 
 export type ShiftStatus = 'active' | 'paused' | 'finished';
+export type ShiftState = 'idle' | 'dispatch' | 'ride';
 
 export interface Shift {
   id: string;
@@ -22,6 +23,16 @@ export interface Shift {
   totalWorkKm: number;
   totalPersonalKm: number;
   lastKm: number;
+  
+  // State tracking
+  currentState?: ShiftState;
+  stateLastChangedAt?: Timestamp;
+  idleTimeSeconds?: number;
+  dispatchTimeSeconds?: number;
+  rideTimeSeconds?: number;
+  productiveKm?: number;
+  unproductiveKm?: number;
+  idleKm?: number;
 }
 
 export interface Trip {
