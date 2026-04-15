@@ -187,6 +187,7 @@ export default function App() {
   const [showFuelModal, setShowFuelModal] = useState(false);
   const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
+  const [showPartialRevenueModal, setShowPartialRevenueModal] = useState(false);
   const [showPastShiftModal, setShowPastShiftModal] = useState(false);
   const [showEditShiftModal, setShowEditShiftModal] = useState(false);
   const [showEditExpenseModal, setShowEditExpenseModal] = useState(false);
@@ -676,14 +677,14 @@ ${importText}
         startAutonomy: autonomy,
         status: 'active',
         activeTimeSeconds: 0,
-        lastStartedAt: serverTimestamp(),
+        lastStartedAt: new Date(),
         totalRevenue: 0,
         totalTrips: 0,
         totalWorkKm: 0,
         totalPersonalKm: personalKm,
         lastKm: km,
         currentState: 'dispatch',
-        stateLastChangedAt: serverTimestamp(),
+        stateLastChangedAt: new Date(),
         idleTimeSeconds: 0,
         dispatchTimeSeconds: 0,
         rideTimeSeconds: 0
@@ -697,12 +698,21 @@ ${importText}
   const changeShiftState = async (newState: ShiftState) => {
     if (!activeShift) return;
     const now = new Date();
-    const lastChanged = activeShift.stateLastChangedAt?.toDate() || activeShift.lastStartedAt?.toDate() || new Date();
-    const diffSeconds = differenceInSeconds(now, lastChanged);
+    
+    let lastChanged: Date;
+    if (activeShift.stateLastChangedAt === null) {
+      lastChanged = now;
+    } else if (activeShift.stateLastChangedAt) {
+      lastChanged = activeShift.stateLastChangedAt.toDate();
+    } else {
+      lastChanged = activeShift.lastStartedAt?.toDate() || now;
+    }
+    
+    const diffSeconds = Math.max(0, differenceInSeconds(now, lastChanged));
     
     const updates: any = {
       currentState: newState,
-      stateLastChangedAt: serverTimestamp()
+      stateLastChangedAt: new Date()
     };
 
     const prevState = activeShift.currentState || 'dispatch';
@@ -729,15 +739,24 @@ ${importText}
     if (!activeShift) return;
     try {
       const now = new Date();
-      const lastStarted = activeShift.lastStartedAt?.toDate() || new Date();
-      const diffTime = differenceInSeconds(now, lastStarted);
+      
+      let lastStarted: Date;
+      if (activeShift.lastStartedAt === null) lastStarted = now;
+      else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
+      else lastStarted = now;
+      
+      const diffTime = Math.max(0, differenceInSeconds(now, lastStarted));
       const newActiveTime = activeShift.activeTimeSeconds + diffTime;
       
       const diffKm = km - activeShift.lastKm;
       const newWorkKm = activeShift.totalWorkKm + Math.max(0, diffKm);
 
-      const lastStateChanged = activeShift.stateLastChangedAt?.toDate() || activeShift.lastStartedAt?.toDate() || new Date();
-      const diffStateTime = differenceInSeconds(now, lastStateChanged);
+      let lastStateChanged: Date;
+      if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
+      else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+      else lastStateChanged = lastStarted;
+      
+      const diffStateTime = Math.max(0, differenceInSeconds(now, lastStateChanged));
       const prevState = activeShift.currentState || 'dispatch';
       
       const updates: any = {
@@ -770,8 +789,8 @@ ${importText}
     try {
       const updates: any = {
         status: 'active',
-        lastStartedAt: serverTimestamp(),
-        stateLastChangedAt: serverTimestamp() // Reset state timer on resume
+        lastStartedAt: new Date(),
+        stateLastChangedAt: new Date() // Reset state timer on resume
       };
       
       if (km !== undefined) {
@@ -789,6 +808,18 @@ ${importText}
     }
   };
 
+  const updatePartialRevenue = async (revenue: number) => {
+    if (!activeShift) return;
+    try {
+      await updateDoc(doc(db, 'shifts', activeShift.id), {
+        totalRevenue: revenue
+      });
+      setShowPartialRevenueModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
+    }
+  };
+
   const finishShift = async (km: number, autonomy: number, avgCons: number, revenue: number, trips: number) => {
     if (!activeShift) return;
     try {
@@ -801,12 +832,20 @@ ${importText}
       let finalRideTime = activeShift.rideTimeSeconds || 0;
 
       if (activeShift.status === 'active') {
-        const lastStarted = activeShift.lastStartedAt?.toDate() || new Date();
-        finalActiveTime += differenceInSeconds(now, lastStarted);
+        let lastStarted: Date;
+        if (activeShift.lastStartedAt === null) lastStarted = now;
+        else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
+        else lastStarted = now;
+        
+        finalActiveTime += Math.max(0, differenceInSeconds(now, lastStarted));
         finalWorkKm += Math.max(0, km - activeShift.lastKm);
 
-        const lastStateChanged = activeShift.stateLastChangedAt?.toDate() || activeShift.lastStartedAt?.toDate() || new Date();
-        const diffStateTime = differenceInSeconds(now, lastStateChanged);
+        let lastStateChanged: Date;
+        if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
+        else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+        else lastStateChanged = lastStarted;
+        
+        const diffStateTime = Math.max(0, differenceInSeconds(now, lastStateChanged));
         const prevState = activeShift.currentState || 'dispatch';
         
         if (prevState === 'idle') finalIdleTime += diffStateTime;
@@ -814,8 +853,17 @@ ${importText}
         else if (prevState === 'ride') finalRideTime += diffStateTime;
       }
 
+      // Normalize state times to match finalActiveTime
+      let totalStateTime = finalIdleTime + finalDispatchTime + finalRideTime;
+      if (totalStateTime > 0 && finalActiveTime > 0 && Math.abs(totalStateTime - finalActiveTime) > 5) {
+        const scale = finalActiveTime / totalStateTime;
+        finalIdleTime *= scale;
+        finalDispatchTime *= scale;
+        finalRideTime *= scale;
+        totalStateTime = finalActiveTime;
+      }
+
       // Calculate proportional KMs
-      const totalStateTime = finalIdleTime + finalDispatchTime + finalRideTime;
       let productiveKm = 0;
       let unproductiveKm = 0;
       let idleKm = 0;
@@ -828,7 +876,7 @@ ${importText}
 
       await updateDoc(doc(db, 'shifts', activeShift.id), {
         status: 'finished',
-        endTime: serverTimestamp(),
+        endTime: new Date(),
         endKm: km,
         endAutonomy: autonomy,
         avgConsumption: avgCons,
@@ -1126,7 +1174,7 @@ ${importText}
       const thirtyDaysAgo = subDays(new Date(), 30);
       const recentShifts = shifts
         .filter(s => s.status === 'finished' && (s.startTime?.toDate() || new Date()) >= thirtyDaysAgo)
-        .sort((a, b) => b.startTime.toMillis() - a.startTime.toMillis())
+        .sort((a, b) => (b.startTime?.toMillis() || 0) - (a.startTime?.toMillis() || 0))
         .slice(0, 100);
 
       const shiftsDataForAI = recentShifts.map(s => {
@@ -1348,7 +1396,7 @@ ${importText}
     const totalTrips = filteredShifts.reduce((acc, s) => acc + s.totalTrips, 0);
     
     // Personal KM logic: Sum of totalPersonalKm within shifts, and calculate gaps for old shifts
-    const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => a.startTime.toMillis() - b.startTime.toMillis());
+    const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (a.startTime?.toMillis() || 0) - (b.startTime?.toMillis() || 0));
     let totalKmPersonal = 0;
     
     filteredShifts.forEach(filteredShift => {
@@ -1409,14 +1457,35 @@ ${importText}
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) return null;
     const now = new Date();
-    const lastStateChanged = activeShift.stateLastChangedAt?.toDate() || activeShift.lastStartedAt?.toDate() || new Date();
-    const diffStateTime = activeShift.status === 'active' ? differenceInSeconds(now, lastStateChanged) : 0;
+    
+    let lastStarted: Date;
+    if (activeShift.lastStartedAt === null) lastStarted = now;
+    else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
+    else lastStarted = now;
+
+    let lastStateChanged: Date;
+    if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
+    else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+    else lastStateChanged = lastStarted;
+    
+    const diffStateTime = activeShift.status === 'active' ? Math.max(0, differenceInSeconds(now, lastStateChanged)) : 0;
     const prevState = activeShift.currentState || 'dispatch';
 
-    const idleTime = (activeShift.idleTimeSeconds || 0) + (prevState === 'idle' ? diffStateTime : 0);
-    const dispatchTime = (activeShift.dispatchTimeSeconds || 0) + (prevState === 'dispatch' ? diffStateTime : 0);
-    const rideTime = (activeShift.rideTimeSeconds || 0) + (prevState === 'ride' ? diffStateTime : 0);
-    const totalStateTime = idleTime + dispatchTime + rideTime;
+    let idleTime = (activeShift.idleTimeSeconds || 0) + (prevState === 'idle' ? diffStateTime : 0);
+    let dispatchTime = (activeShift.dispatchTimeSeconds || 0) + (prevState === 'dispatch' ? diffStateTime : 0);
+    let rideTime = (activeShift.rideTimeSeconds || 0) + (prevState === 'ride' ? diffStateTime : 0);
+    let totalStateTime = idleTime + dispatchTime + rideTime;
+
+    const currentActiveTime = activeShift.activeTimeSeconds + (activeShift.status === 'active' ? Math.max(0, differenceInSeconds(now, lastStarted)) : 0);
+    
+    // Normalize to fix any past corrupted data
+    if (totalStateTime > 0 && currentActiveTime > 0 && Math.abs(totalStateTime - currentActiveTime) > 5) {
+      const scale = currentActiveTime / totalStateTime;
+      idleTime *= scale;
+      dispatchTime *= scale;
+      rideTime *= scale;
+      totalStateTime = currentActiveTime;
+    }
 
     const efficiency = totalStateTime > 0 ? (rideTime / totalStateTime) * 100 : 0;
     const rphProdutivo = rideTime > 0 ? activeShift.totalRevenue / (rideTime / 3600) : 0;
@@ -1432,7 +1501,7 @@ ${importText}
     const totalTime = todayShifts.filter(s => s.id !== activeShift?.id).reduce((acc, s) => acc + s.activeTimeSeconds, 0) + (activeShift ? elapsedTime : 0);
     const totalTrips = todayShifts.reduce((acc, s) => acc + s.totalTrips, 0);
     
-    const sortedTodayShifts = [...todayShifts].sort((a, b) => a.startTime.toMillis() - b.startTime.toMillis());
+    const sortedTodayShifts = [...todayShifts].sort((a, b) => (a.startTime?.toMillis() || 0) - (b.startTime?.toMillis() || 0));
     const startKm = sortedTodayShifts.length > 0 ? sortedTodayShifts[0].startKm : 0;
 
     return { totalRevenue, totalTime, totalTrips, startKm, shiftCount: todayShifts.length };
@@ -1731,6 +1800,16 @@ ${importText}
                   </div>
                 )}
 
+                {activeShift?.status === 'active' && (
+                  <Button 
+                    onClick={() => setShowPartialRevenueModal(true)} 
+                    variant="outline" 
+                    className="w-full py-4 mt-4 bg-white/10 text-white/90 border-white/20 hover:bg-white/20"
+                  >
+                    Registrar Faturamento Parcial
+                  </Button>
+                )}
+
                 {settings && (
                   <div className="mt-8 space-y-2">
                     <div className="flex justify-between text-xs font-bold uppercase opacity-70 dark:text-gray-400">
@@ -1787,31 +1866,26 @@ ${importText}
                     </div>
 
                     <div className="h-3 rounded-full overflow-hidden flex bg-gray-100 dark:bg-gray-800">
-                      <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.rideTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-blue-500" />
+                      <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.rideTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-green-500" />
                       <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.dispatchTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-yellow-500" />
                       <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.idleTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-red-500" />
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                      <div className="text-blue-600 dark:text-blue-400">
-                        Com Passageiro<br/>{formatTime(activeShiftMetrics.rideTime)}
+                      <div className="text-green-600 dark:text-green-400">
+                        Com Passageiro<br/>
+                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.rideTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
+                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.rideTime)}</span>
                       </div>
                       <div className="text-yellow-600 dark:text-yellow-400">
-                        Indo Buscar<br/>{formatTime(activeShiftMetrics.dispatchTime)}
+                        Indo Buscar<br/>
+                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.dispatchTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
+                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.dispatchTime)}</span>
                       </div>
                       <div className="text-red-600 dark:text-red-400">
-                        Sem Corridas<br/>{formatTime(activeShiftMetrics.idleTime)}
-                      </div>
-                    </div>
-
-                    <div className="pt-4 border-t border-gray-100 dark:border-gray-800 grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">R$/Hora Produtiva</p>
-                        <p className="text-lg font-bold dark:text-white">R$ {activeShiftMetrics.rphProdutivo.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Corridas</p>
-                        <p className="text-lg font-bold dark:text-white">{activeShift.totalTrips}</p>
+                        Sem Corridas<br/>
+                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.idleTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
+                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.idleTime)}</span>
                       </div>
                     </div>
                   </div>
@@ -2054,44 +2128,55 @@ ${importText}
                                           </div>
                                         </div>
 
-                                        {(shift.productiveKm !== undefined || shift.rideTimeSeconds !== undefined) && (
-                                          <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
-                                            <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Eficiência do Turno</p>
-                                            
-                                            <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                                              <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-blue-100 dark:border-blue-900/30">
-                                                <p className="text-blue-600 dark:text-blue-400 mb-1">Produtivo</p>
-                                                <p className="text-sm dark:text-white">{formatTime(shift.rideTimeSeconds || 0)}</p>
-                                                <p className="text-gray-500 dark:text-gray-400">{(shift.productiveKm || 0).toFixed(1)} km</p>
+                                        {(() => {
+                                          if (shift.productiveKm === undefined && shift.rideTimeSeconds === undefined) return null;
+                                          
+                                          let rTime = shift.rideTimeSeconds || 0;
+                                          let dTime = shift.dispatchTimeSeconds || 0;
+                                          let iTime = shift.idleTimeSeconds || 0;
+                                          const tTime = rTime + dTime + iTime;
+                                          
+                                          if (tTime > 0 && shift.activeTimeSeconds > 0 && Math.abs(tTime - shift.activeTimeSeconds) > 5) {
+                                            const scale = shift.activeTimeSeconds / tTime;
+                                            rTime *= scale;
+                                            dTime *= scale;
+                                            iTime *= scale;
+                                          }
+
+                                          const rPct = tTime > 0 ? (rTime / tTime) * 100 : 0;
+                                          const dPct = tTime > 0 ? (dTime / tTime) * 100 : 0;
+                                          const iPct = tTime > 0 ? (iTime / tTime) * 100 : 0;
+
+                                          return (
+                                            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
+                                              <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Eficiência do Turno</p>
+                                              
+                                              <div className="h-3 rounded-full overflow-hidden flex bg-gray-100 dark:bg-gray-800 mb-2">
+                                                <div style={{ width: `${rPct}%` }} className="bg-green-500" />
+                                                <div style={{ width: `${dPct}%` }} className="bg-yellow-500" />
+                                                <div style={{ width: `${iPct}%` }} className="bg-red-500" />
                                               </div>
-                                              <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-yellow-100 dark:border-yellow-900/30">
-                                                <p className="text-yellow-600 dark:text-yellow-400 mb-1">Improdutivo</p>
-                                                <p className="text-sm dark:text-white">{formatTime(shift.dispatchTimeSeconds || 0)}</p>
-                                                <p className="text-gray-500 dark:text-gray-400">{(shift.unproductiveKm || 0).toFixed(1)} km</p>
-                                              </div>
-                                              <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-red-100 dark:border-red-900/30">
-                                                <p className="text-red-600 dark:text-red-400 mb-1">Ocioso</p>
-                                                <p className="text-sm dark:text-white">{formatTime(shift.idleTimeSeconds || 0)}</p>
-                                                <p className="text-gray-500 dark:text-gray-400">{(shift.idleKm || 0).toFixed(1)} km</p>
+
+                                              <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
+                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-green-100 dark:border-green-900/30">
+                                                  <p className="text-green-600 dark:text-green-400 mb-1">Com Passageiro</p>
+                                                  <p className="text-lg dark:text-white">{rPct.toFixed(1)}%</p>
+                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(rTime)}</p>
+                                                </div>
+                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-yellow-100 dark:border-yellow-900/30">
+                                                  <p className="text-yellow-600 dark:text-yellow-400 mb-1">Indo Buscar</p>
+                                                  <p className="text-lg dark:text-white">{dPct.toFixed(1)}%</p>
+                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(dTime)}</p>
+                                                </div>
+                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-red-100 dark:border-red-900/30">
+                                                  <p className="text-red-600 dark:text-red-400 mb-1">Sem Corrida</p>
+                                                  <p className="text-lg dark:text-white">{iPct.toFixed(1)}%</p>
+                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(iTime)}</p>
+                                                </div>
                                               </div>
                                             </div>
-                                            
-                                            <div className="grid grid-cols-2 gap-4">
-                                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800">
-                                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / Hora Produtiva</p>
-                                                <p className="font-bold text-green-600 dark:text-green-400">
-                                                  R$ {shift.rideTimeSeconds ? (shift.totalRevenue / (shift.rideTimeSeconds / 3600)).toFixed(2) : '0.00'}
-                                                </p>
-                                              </div>
-                                              <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800">
-                                                <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / KM Produtivo</p>
-                                                <p className="font-bold text-green-600 dark:text-green-400">
-                                                  R$ {shift.productiveKm ? (shift.totalRevenue / shift.productiveKm).toFixed(2) : '0.00'}
-                                                </p>
-                                              </div>
-                                            </div>
-                                          </div>
-                                        )}
+                                          );
+                                        })()}
                                         
                                         {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
                                           <div className="space-y-2 mt-4">
@@ -2708,6 +2793,10 @@ ${importText}
         <ShiftFuelForm onSubmit={addShiftFuel} />
       </Modal>
 
+      <Modal isOpen={showPartialRevenueModal} onClose={() => setShowPartialRevenueModal(false)} title="Faturamento Parcial">
+        <PartialRevenueForm onSubmit={updatePartialRevenue} currentRevenue={activeShift?.totalRevenue || 0} />
+      </Modal>
+
       <Modal isOpen={showPastShiftModal} onClose={() => setShowPastShiftModal(false)} title="Registrar Turno Passado">
         <PastShiftForm onSubmit={addPastShift} />
       </Modal>
@@ -3005,6 +3094,30 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
       <Input label="Nova Autonomia (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
       <Button onClick={() => onSubmit(Number(km), Number(autonomy))} className="w-full py-4">Retomar Turno</Button>
     </div>
+  );
+}
+
+function PartialRevenueForm({ onSubmit, currentRevenue }: { onSubmit: (revenue: number) => void, currentRevenue: number }) {
+  const [revenue, setRevenue] = useState(currentRevenue > 0 ? currentRevenue.toString() : '');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit(Number(revenue));
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Faturamento Parcial (R$)</label>
+        <CurrencyInput
+          value={revenue}
+          onChange={setRevenue}
+          placeholder="Ex: 150,00"
+          required
+        />
+      </div>
+      <Button type="submit" className="w-full py-4">Salvar Faturamento</Button>
+    </form>
   );
 }
 
