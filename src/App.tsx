@@ -9,7 +9,7 @@ import {
   Play, Pause, Square, History, DollarSign, BarChart3, 
   Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, 
   TrendingUp, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon,
-  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users
+  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -23,7 +23,7 @@ import {
 import { 
   collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
-import { format, differenceInSeconds, startOfDay, endOfDay, subDays, subMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
+import { format, differenceInSeconds, startOfDay, endOfDay, subDays, subMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell 
@@ -215,6 +215,12 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showImportPreviewModal, setShowImportPreviewModal] = useState(false);
+  const [showAiAnalysisModal, setShowAiAnalysisModal] = useState(false);
+  const [analysisFilter, setAnalysisFilter] = useState<'day' | 'week' | 'month'>('week');
+  const [selectedAnalysisDate, setSelectedAnalysisDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [analysisQuery, setAnalysisQuery] = useState('');
+  const [analysisResult, setAnalysisResult] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [parsedImportData, setParsedImportData] = useState<any[] | null>(null);
   const [importText, setImportText] = useState('');
   const [isImportingData, setIsImportingData] = useState(false);
@@ -486,6 +492,94 @@ ${importText}
       alert("Ocorreu um erro ao analisar os dados. Verifique o formato e tente novamente.");
     } finally {
       setIsImportingData(false);
+    }
+  };
+
+  const handleHistoryAIAnalysis = async () => {
+    if (!analysisQuery.trim()) {
+      alert("Por favor, digite uma pergunta.");
+      return;
+    }
+
+    setIsAnalyzing(true);
+    setAnalysisResult(null);
+
+    try {
+      const baseDate = new Date(selectedAnalysisDate + 'T12:00:00');
+      let startDate: Date;
+      let endDate: Date;
+
+      if (analysisFilter === 'day') {
+        startDate = startOfDay(baseDate);
+        endDate = endOfDay(baseDate);
+      } else if (analysisFilter === 'week') {
+        startDate = startOfWeek(baseDate, { weekStartsOn: 1 });
+        endDate = endOfWeek(baseDate, { weekStartsOn: 1 });
+      } else {
+        startDate = startOfMonth(baseDate);
+        endDate = endOfMonth(baseDate);
+      }
+
+      // Filter shifts
+      const relevantShifts = shifts.filter(s => {
+        const d = s.startTime.toDate();
+        return d >= startDate && d <= endDate;
+      });
+
+      if (relevantShifts.length === 0) {
+        setAnalysisResult("Não encontrei dados de turnos para este período para analisar.");
+        setIsAnalyzing(false);
+        return;
+      }
+
+      // Prepare data for AI
+      const dataForAi = relevantShifts.map(s => ({
+        data: format(s.startTime.toDate(), 'dd/MM/yyyy'),
+        horario: `${format(s.startTime.toDate(), 'HH:mm')} - ${s.endTime ? format(s.endTime.toDate(), 'HH:mm') : 'Em andamento'}`,
+        faturamento: s.totalRevenue,
+        km_rodado: s.totalWorkKm || (s.endKm ? s.endKm - s.startKm : 0),
+        viagens: s.totalTrips,
+        consumo: s.avgConsumption,
+        horas: s.activeTimeSeconds ? (s.activeTimeSeconds / 3600).toFixed(1) : '?',
+        v_trips: shiftTrips[s.id]?.map(t => ({
+          v: t.value,
+          d: t.distanceKm,
+          dur: (t.durationSeconds / 60).toFixed(0) + 'min'
+        }))
+      }));
+
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+      const prompt = `Você é um consultor especializado em motoristas de aplicativo.
+Analise os seguintes dados do período (${analysisFilter === 'day' ? 'Dia' : analysisFilter === 'week' ? 'Semana' : 'Mês'}):
+${JSON.stringify(dataForAi)}
+
+O motorista perguntou: "${analysisQuery}"
+
+Forneça uma análise resumida, direta e acionável. 
+Fale sobre:
+- Desempenho geral.
+- Oportunidades de melhoria (melhores horários/dias).
+- Rentabilidade (quais corridas foram boas ou ruins com base em R$/km e R$/hora).
+- Sugestões para bater metas.
+
+REGRAS CRÍTICAS:
+- Responda em Português Brasileiro.
+- Seja MUITO RESUMIDO.
+- Máximo de 700 caracteres.
+- Use bullet points se ajudar na brevidade.
+- Não use introduções longas como "Com base nos dados...". Vá direto ao ponto.`;
+
+      const result = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: prompt
+      });
+
+      setAnalysisResult(result.text || "Não foi possível gerar a análise no momento.");
+    } catch (error) {
+      console.error("AI Analysis error:", error);
+      setAnalysisResult("Ocorreu um erro ao processar sua análise. Tente novamente.");
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -2104,25 +2198,42 @@ ${importText}
                               <Card key={shift.id} className="hover:border-blue-200 transition-colors cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500">
                                 <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
                                   <div className="flex justify-between items-center">
-                                    <div>
-                                      <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">
-                                        Turno {group.shifts.length - index}
-                                      </p>
-                                      <div className="flex items-center gap-4 mt-2">
-                                        <div className="flex items-center gap-1 text-gray-900 dark:text-white font-bold">
-                                          <DollarSign size={16} className="text-green-500" />
-                                          R$ {shift.totalRevenue.toFixed(2)}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <div className="bg-blue-100 dark:bg-blue-900/30 p-1 rounded-md">
+                                          <Car size={14} className="text-blue-600 dark:text-blue-400" />
                                         </div>
-                                        <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400 font-medium">
-                                          <Clock size={16} />
+                                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                          Turno {group.shifts.length - index}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-4">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-lg font-bold text-gray-900 dark:text-white">
+                                            R$ {shift.totalRevenue.toFixed(2)}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs font-medium">
+                                          <Clock size={12} />
                                           {formatTime(shift.activeTimeSeconds)}
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                      <Button 
-                                        variant="ghost" 
-                                        className="p-2 text-blue-500" 
+                                    <div className="flex items-center gap-2 ml-4">
+                                      <button 
+                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-90" 
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedShiftId(shift.id);
+                                          setShowTripModal(true);
+                                        }}
+                                        title="Adicionar Corrida"
+                                      >
+                                        <Plus size={20} strokeWidth={2.5} />
+                                      </button>
+                                      
+                                      <button 
+                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 transition-all active:scale-90"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingShift(shift);
@@ -2130,21 +2241,14 @@ ${importText}
                                         }}
                                         title="Editar Turno"
                                       >
-                                        <Plus size={18} className="rotate-45" />
-                                      </Button>
-                                      <Button 
-                                        variant="ghost" 
-                                        className="p-2" 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setSelectedShiftId(shift.id);
-                                          setShowTripModal(true);
-                                        }}
+                                        <Edit2 size={18} />
+                                      </button>
+
+                                      <motion.div 
+                                        animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}
+                                        className="w-8 h-8 flex items-center justify-center text-gray-300 dark:text-gray-600"
                                       >
-                                        <Plus size={20} />
-                                      </Button>
-                                      <motion.div animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}>
-                                        <ChevronRight className="text-gray-300 group-hover/card:text-blue-500 transition-colors" />
+                                        <ChevronRight size={20} />
                                       </motion.div>
                                     </div>
                                   </div>
@@ -2163,30 +2267,30 @@ ${importText}
                                           <span>Detalhes do Turno</span>
                                           <span>{shift.totalTrips} Corridas</span>
                                         </div>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Inicial</p>
-                                            <p className="font-bold dark:text-white">{shift.startKm} km</p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Inicial</p>
+                                            <p className="text-sm font-bold dark:text-white">{shift.startKm} <span className="text-[10px] font-medium text-gray-400">km</span></p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Final</p>
-                                            <p className="font-bold dark:text-white">{shift.endKm || shift.lastKm || '--'} km</p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Final</p>
+                                            <p className="text-sm font-bold dark:text-white">{shift.endKm || shift.lastKm || '--'} <span className="text-[10px] font-medium text-gray-400">km</span></p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">KM Trabalho</p>
-                                            <p className="font-bold dark:text-white">{shift.totalWorkKm?.toFixed(1) || ((shift.endKm || 0) - shift.startKm).toFixed(1)} km</p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Percorrido</p>
+                                            <p className="text-sm font-bold dark:text-white">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km</span></p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / KM</p>
-                                            <p className="font-bold dark:text-white">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">R$ por KM</p>
+                                            <p className="text-sm font-bold text-blue-600 dark:text-blue-400">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">R$ / Hora</p>
-                                            <p className="font-bold dark:text-white">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">R$ por Hora</p>
+                                            <p className="text-sm font-bold text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Consumo Médio</p>
-                                            <p className="font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} km/L</p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Consumo</p>
+                                            <p className="text-sm font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
                                           </div>
                                         </div>
 
@@ -2274,7 +2378,7 @@ ${importText}
                                                           setEditingTrip({ shiftId: shift.id, trip });
                                                           setShowEditTripModal(true);
                                                         }}
-                                                        className="p-1 hover:text-blue-500 transition-colors"
+                                                        className="p-1.5 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
                                                       >
                                                         <Edit2 size={14} />
                                                       </button>
@@ -2283,9 +2387,9 @@ ${importText}
                                                           e.stopPropagation();
                                                           setTripToDelete({ shiftId: shift.id, tripId: trip.id });
                                                         }}
-                                                        className="p-1 hover:text-red-500 transition-colors"
+                                                        className="p-1.5 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
                                                       >
-                                                        <Plus size={14} className="rotate-45" />
+                                                        <X size={16} />
                                                       </button>
                                                     </div>
                                                   </div>
@@ -2307,6 +2411,33 @@ ${importText}
                   );
                 })
               )}
+
+              {/* AI Analysis Floating Button at the end of history */}
+              <div className="pt-6 pb-20">
+                <Button 
+                  onClick={() => setShowAiAnalysisModal(true)}
+                  className="w-full py-6 rounded-3xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-200 dark:shadow-none transition-all group overflow-hidden relative"
+                >
+                  <motion.div
+                    className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                    initial={false}
+                    animate={{ x: ['-100%', '100%'] }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                  />
+                  <div className="flex items-center justify-center gap-3 relative z-10">
+                    <div className="bg-white/20 p-2 rounded-xl">
+                      <Sparkles size={20} className="text-white" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-xs font-black uppercase tracking-widest opacity-80">Inteligência Artificial</p>
+                      <p className="text-lg font-bold">Análise de IA</p>
+                    </div>
+                  </div>
+                </Button>
+                <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-4 font-medium uppercase tracking-tighter">
+                  Analise seu desempenho diário, semanal ou mensal com IA
+                </p>
+              </div>
             </motion.div>
           )}
 
@@ -2839,6 +2970,122 @@ ${importText}
       </nav>
 
       {/* Modals */}
+      <Modal isOpen={showAiAnalysisModal} onClose={() => setShowAiAnalysisModal(false)} title="Análise de IA">
+        <div className="space-y-6">
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl flex items-center gap-3 border border-blue-100 dark:border-blue-800/50">
+            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-blue-600 dark:text-blue-400">
+              <Sparkles size={18} />
+            </div>
+            <p className="text-xs text-blue-800 dark:text-blue-200 font-medium">
+              Escolha um período e pergunte qualquer coisa sobre seu histórico de trabalho.
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Período de Análise</label>
+                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+                  {(['day', 'week', 'month'] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setAnalysisFilter(f)}
+                      className={cn(
+                        "flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all",
+                        analysisFilter === f ? "bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+                      )}
+                    >
+                      {f === 'day' ? 'Dia' : f === 'week' ? 'Semana' : 'Mês'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Referência</label>
+                <input 
+                  type="date" 
+                  value={selectedAnalysisDate}
+                  onChange={(e) => setSelectedAnalysisDate(e.target.value)}
+                  className="w-full bg-gray-100 dark:bg-gray-800 border-none rounded-xl p-2 text-xs font-bold dark:text-white"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Sua Pergunta</label>
+              <textarea 
+                placeholder="Ex: Como foi minha semana? O que posso melhorar? Quais corridas foram ruins?"
+                value={analysisQuery}
+                onChange={(e) => setAnalysisQuery(e.target.value)}
+                className="w-full bg-gray-100 dark:bg-gray-800 border-none rounded-2xl p-4 text-sm dark:text-white h-24 focus:ring-2 focus:ring-blue-500 transition-all resize-none"
+              />
+            </div>
+
+            <Button 
+              onClick={handleHistoryAIAnalysis}
+              disabled={isAnalyzing || !analysisQuery.trim()}
+              className="w-full py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-2"
+            >
+              {isAnalyzing ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  <span>Analisando...</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles size={18} />
+                  <span>Gerar Análise</span>
+                </>
+              )}
+            </Button>
+          </div>
+
+          <AnimatePresence>
+            {analysisResult && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-4 border border-gray-100 dark:border-gray-800 transition-colors"
+              >
+                <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300 font-medium leading-relaxed markdown-body">
+                  <Markdown>{analysisResult}</Markdown>
+                </div>
+                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center">
+                  <p className="text-[10px] text-gray-400 uppercase font-bold">Resposta da IA</p>
+                  <button 
+                    onClick={() => setAnalysisResult(null)}
+                    className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase"
+                  >
+                    Limpar
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
+            <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest mb-2">Exemplos de perguntas:</p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                "Como faturar mais?",
+                "Sugestão de horários",
+                "Faltou quanto p/ meta?",
+                "Análise de lucro"
+              ].map(q => (
+                <button
+                  key={q}
+                  onClick={() => setAnalysisQuery(q)}
+                  className="bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-[10px] font-bold py-1 px-3 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all"
+                >
+                  {q}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={showStartModal} onClose={() => setShowStartModal(false)} title="Iniciar Turno">
         <StartShiftForm onSubmit={startShift} initialKm={lastRecordedKm} />
       </Modal>
