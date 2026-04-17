@@ -38,6 +38,14 @@ function cn(...inputs: ClassValue[]) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
+const ensureDate = (timestamp: any): Date => {
+  if (!timestamp) return new Date();
+  if (typeof timestamp.toDate === 'function') return timestamp.toDate();
+  if (timestamp instanceof Date) return timestamp;
+  if (typeof timestamp === 'string' || typeof timestamp === 'number') return new Date(timestamp);
+  return new Date();
+};
+
 // --- Components ---
 
 const Card = ({ children, className, onClick }: { children: React.ReactNode, className?: string, onClick?: () => void, key?: React.Key }) => (
@@ -156,6 +164,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'costs' | 'insights' | 'settings'>('operation');
+  const [historyFilter, setHistoryFilter] = useState<'week' | 'month' | 'all'>('week');
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -218,8 +227,17 @@ export default function App() {
 
   const groupedShifts = useMemo(() => {
     const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number, totalWorkKm: number }> = {};
-    shifts.forEach(shift => {
-      const date = shift.startTime?.toDate() || new Date();
+    const now = new Date();
+    
+    let filteredShifts = shifts;
+    if (historyFilter === 'week') {
+      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), now, { weekStartsOn: 1 }));
+    } else if (historyFilter === 'month') {
+      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), now));
+    }
+
+    filteredShifts.forEach(shift => {
+      const date = ensureDate(shift.startTime);
       const dateKey = format(date, 'yyyy-MM-dd');
       if (!groups[dateKey]) {
         groups[dateKey] = { date, shifts: [], totalRevenue: 0, totalTime: 0, totalWorkKm: 0 };
@@ -230,7 +248,7 @@ export default function App() {
       groups[dateKey].totalWorkKm += (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm));
     });
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [shifts]);
+  }, [shifts, historyFilter]);
 
   const toggleDay = (dateKey: string) => {
     setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
@@ -359,8 +377,11 @@ export default function App() {
   const handleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      if (err.code === 'auth/invalid-credential') {
+        setAuthError('Erro de credencial. Se estiver usando um navegador privado ou bloqueador de anúncios, tente desativá-los.');
+      }
     }
   };
 
@@ -376,7 +397,9 @@ export default function App() {
     } catch (err: any) {
       console.error(err);
       if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-        setAuthError('E-mail ou senha incorretos.');
+        setAuthError('E-mail ou senha incorretos. Se você nunca criou uma conta com e-mail, tente o Login com Google.');
+      } else if (err.code === 'auth/operation-not-allowed') {
+        setAuthError('O login por e-mail não está ativado. Use o Login com Google ou peça ao administrador para ativar.');
       } else if (err.code === 'auth/email-already-in-use') {
         setAuthError('Este e-mail já está em uso.');
       } else if (err.code === 'auth/weak-password') {
@@ -672,7 +695,7 @@ ${importText}
       const personalKm = lastRecordedKm > 0 && km > lastRecordedKm ? km - lastRecordedKm : 0;
       await addDoc(collection(db, 'shifts'), {
         userId: user.uid,
-        startTime: serverTimestamp(),
+        startTime: new Date(),
         startKm: km,
         startAutonomy: autonomy,
         status: 'active',
@@ -703,9 +726,9 @@ ${importText}
     if (activeShift.stateLastChangedAt === null) {
       lastChanged = now;
     } else if (activeShift.stateLastChangedAt) {
-      lastChanged = activeShift.stateLastChangedAt.toDate();
+      lastChanged = ensureDate(activeShift.stateLastChangedAt);
     } else {
-      lastChanged = activeShift.lastStartedAt?.toDate() || now;
+      lastChanged = ensureDate(activeShift.lastStartedAt);
     }
     
     const diffSeconds = Math.max(0, differenceInSeconds(now, lastChanged));
@@ -808,11 +831,11 @@ ${importText}
     }
   };
 
-  const updatePartialRevenue = async (revenue: number) => {
+  const updatePartialRevenue = async (revenueToAdd: number) => {
     if (!activeShift) return;
     try {
       await updateDoc(doc(db, 'shifts', activeShift.id), {
-        totalRevenue: revenue
+        totalRevenue: (activeShift.totalRevenue || 0) + revenueToAdd
       });
       setShowPartialRevenueModal(false);
     } catch (err) {
@@ -898,16 +921,29 @@ ${importText}
     }
   };
 
-  const addExpense = async (date: Date, category: any, value: number, km: number) => {
+  const addExpense = async (date: Date, category: any, value: number, km: number, paymentMethod: 'Pix' | 'Crédito', installments: number) => {
     if (!user) return;
     try {
-      await addDoc(collection(db, 'expenses'), {
-        userId: user.uid,
-        date: Timestamp.fromDate(date),
-        category,
-        value,
-        kmAtExpense: km
-      });
+      const batch = writeBatch(db);
+      const installmentValue = value / installments;
+
+      for (let i = 0; i < installments; i++) {
+        const expenseDate = new Date(date);
+        expenseDate.setMonth(expenseDate.getMonth() + i);
+
+        const newExpenseRef = doc(collection(db, 'expenses'));
+        batch.set(newExpenseRef, {
+          userId: user.uid,
+          date: Timestamp.fromDate(expenseDate),
+          category,
+          value: installmentValue,
+          kmAtExpense: km,
+          paymentMethod,
+          installments: installments > 1 ? installments : undefined
+        });
+      }
+      
+      await batch.commit();
       setShowExpenseModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'expenses');
@@ -1170,10 +1206,17 @@ ${importText}
 
       const viagensPorHora = metrics.totalHours > 0 ? (metrics.totalTrips / metrics.totalHours).toFixed(2) : '0.00';
 
-      // Filtro de Contexto: Últimos 30 dias ou até 100 turnos
-      const thirtyDaysAgo = subDays(new Date(), 30);
-      const recentShifts = shifts
-        .filter(s => s.status === 'finished' && (s.startTime?.toDate() || new Date()) >= thirtyDaysAgo)
+      const now = new Date();
+      let filteredShiftsForAi = shifts.filter(s => s.status === 'finished');
+      if (insightFilter === 'day') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameDay((s.startTime?.toDate() || new Date()), now));
+      } else if (insightFilter === 'week') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), now, { weekStartsOn: 1 }));
+      } else if (insightFilter === 'month') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), now));
+      }
+
+      const recentShifts = filteredShiftsForAi
         .sort((a, b) => (b.startTime?.toMillis() || 0) - (a.startTime?.toMillis() || 0))
         .slice(0, 100);
 
@@ -1185,9 +1228,11 @@ ${importText}
         return `[${date}] R$${s.totalRevenue.toFixed(2)} | ${duration.toFixed(1)}h | ${s.totalWorkKm.toFixed(1)}km | ${s.totalTrips} viagens | R$/h: ${rph.toFixed(2)} | R$/km: ${rpkm.toFixed(2)}`;
       }).join('\n');
 
+      const filterDescription = insightFilter === 'day' ? 'Hoje' : insightFilter === 'week' ? 'Nesta Semana' : 'Neste Mês';
+
       const prompt = `
         Atue como um Conselheiro Estratégico de Alta Performance para motoristas de aplicativo. 
-        Analise os seguintes dados recentes (últimos 30 dias / até 100 turnos):
+        Analise os seguintes dados recentes (${filterDescription} / até 100 turnos):
         
         RESUMO GERAL:
         - Faturamento: R$ ${metrics.totalRevenue.toFixed(2)}
@@ -1379,9 +1424,9 @@ ${importText}
       filteredExpenses = expenses.filter(e => isSameDay((e.date?.toDate() || new Date()), now));
       filteredFuel = fuelRecords.filter(f => isSameDay((f.date?.toDate() || new Date()), now));
     } else if (insightFilter === 'week') {
-      filteredShifts = filteredShifts.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), now, { weekStartsOn: 0 }));
-      filteredExpenses = expenses.filter(e => isSameWeek((e.date?.toDate() || new Date()), now, { weekStartsOn: 0 }));
-      filteredFuel = fuelRecords.filter(f => isSameWeek((f.date?.toDate() || new Date()), now, { weekStartsOn: 0 }));
+      filteredShifts = filteredShifts.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), now, { weekStartsOn: 1 }));
+      filteredExpenses = expenses.filter(e => isSameWeek((e.date?.toDate() || new Date()), now, { weekStartsOn: 1 }));
+      filteredFuel = fuelRecords.filter(f => isSameWeek((f.date?.toDate() || new Date()), now, { weekStartsOn: 1 }));
     } else if (insightFilter === 'month') {
       filteredShifts = filteredShifts.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), now));
       filteredExpenses = expenses.filter(e => isSameMonth((e.date?.toDate() || new Date()), now));
@@ -1460,12 +1505,12 @@ ${importText}
     
     let lastStarted: Date;
     if (activeShift.lastStartedAt === null) lastStarted = now;
-    else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
-    else lastStarted = now;
+    else if (activeShift.lastStartedAt) lastStarted = ensureDate(activeShift.lastStartedAt);
+    else lastStarted = ensureDate(activeShift.startTime);
 
     let lastStateChanged: Date;
     if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
-    else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+    else if (activeShift.stateLastChangedAt) lastStateChanged = ensureDate(activeShift.stateLastChangedAt);
     else lastStateChanged = lastStarted;
     
     const diffStateTime = activeShift.status === 'active' ? Math.max(0, differenceInSeconds(now, lastStateChanged)) : 0;
@@ -1495,16 +1540,25 @@ ${importText}
 
   const todayMetrics = useMemo(() => {
     const now = new Date();
-    const todayShifts = shifts.filter(s => isSameDay((s.startTime?.toDate() || new Date()), now));
+    const todayShifts = shifts.filter(s => {
+      const shiftDate = ensureDate(s.startTime);
+      return isSameDay(shiftDate, now);
+    });
     
-    const totalRevenue = todayShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
-    const totalTime = todayShifts.filter(s => s.id !== activeShift?.id).reduce((acc, s) => acc + s.activeTimeSeconds, 0) + (activeShift ? elapsedTime : 0);
-    const totalTrips = todayShifts.reduce((acc, s) => acc + s.totalTrips, 0);
+    // Ensure activeShift is included and has latest data
+    const otherTodayShifts = todayShifts.filter(s => s.id !== activeShift?.id);
+    const allTodayShifts = activeShift && isSameDay(ensureDate(activeShift.startTime), now) 
+      ? [...otherTodayShifts, activeShift] 
+      : todayShifts;
+
+    const totalRevenue = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalRevenue) || 0), 0);
+    const totalTime = allTodayShifts.filter(s => s.id !== activeShift?.id).reduce((acc, s) => acc + (Number(s.activeTimeSeconds) || 0), 0) + (activeShift ? elapsedTime : 0);
+    const totalTrips = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalTrips) || 0), 0);
     
-    const sortedTodayShifts = [...todayShifts].sort((a, b) => (a.startTime?.toMillis() || 0) - (b.startTime?.toMillis() || 0));
+    const sortedTodayShifts = [...allTodayShifts].sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
     const startKm = sortedTodayShifts.length > 0 ? sortedTodayShifts[0].startKm : 0;
 
-    return { totalRevenue, totalTime, totalTrips, startKm, shiftCount: todayShifts.length };
+    return { totalRevenue, totalTime, totalTrips, startKm, shiftCount: allTodayShifts.length };
   }, [shifts, activeShift, elapsedTime]);
 
   const costsMetrics = useMemo(() => {
@@ -1806,7 +1860,7 @@ ${importText}
                     variant="outline" 
                     className="w-full py-4 mt-4 bg-white/10 text-white/90 border-white/20 hover:bg-white/20"
                   >
-                    Registrar Faturamento Parcial
+                    Ganhos (parcial)
                   </Button>
                 )}
 
@@ -1984,16 +2038,24 @@ ${importText}
               animate={{ opacity: 1, y: 0 }}
               className="space-y-4"
             >
-              <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-6">
-                <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
-                <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
-                    Importar
-                  </Button>
-                  <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
-                    {isExporting ? 'Exportando...' : 'Exportar'}
-                  </Button>
-                  <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Registrar</Button>
+              <div className="flex flex-col gap-4 mb-6">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
+                  <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
+                      Importar
+                    </Button>
+                    <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
+                      {isExporting ? 'Exportando...' : 'Exportar'}
+                    </Button>
+                    <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Registrar</Button>
+                  </div>
+                </div>
+                
+                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
+                  <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'week' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Semana</button>
+                  <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
+                  <button onClick={() => setHistoryFilter('all')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'all' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Tudo</button>
                 </div>
               </div>
               {shifts.length === 0 ? (
@@ -2266,7 +2328,18 @@ ${importText}
 
               {/* Maintenance Reserve 30 Days */}
               <div className="space-y-3">
-                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Resumo de Manutenção (Últimos 30 Dias)</h3>
+                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Resumo do Mês (Gasolina e Despesas)</h3>
+                <div className="grid grid-cols-2 gap-3">
+                   <Card>
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Abastecimento Mês</p>
+                      <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {fuelRecords.filter(f => isSameMonth(ensureDate(f.date), new Date())).reduce((acc, f) => acc + f.totalValue, 0).toFixed(2)}</p>
+                   </Card>
+                   <Card>
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Outras Despesas Mês</p>
+                      <p className="text-lg font-bold text-red-600 dark:text-red-400">R$ {expenses.filter(e => isSameMonth(ensureDate(e.date), new Date())).reduce((acc, e) => acc + e.value, 0).toFixed(2)}</p>
+                   </Card>
+                </div>
+                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mt-4">Resumo de Manutenção (Últimos 30 Dias)</h3>
                 <Card className="bg-gradient-to-br from-gray-900 to-gray-800 text-white border-none shadow-xl overflow-hidden relative">
                   <div className="absolute top-0 right-0 p-4 opacity-10">
                     <SettingsIcon size={64} />
@@ -2313,31 +2386,38 @@ ${importText}
               {fuelRecords.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Últimos Abastecimentos</h3>
-                  {fuelRecords.slice(0, 5).map(fuel => (
-                    <Card 
-                      key={fuel.id} 
-                      className="border-l-4 border-l-blue-500 group cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
-                      onClick={() => {
-                        setEditingFuel(fuel);
-                        setShowEditFuelModal(true);
-                      }}
-                    >
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-bold text-gray-900 dark:text-white">R$ {fuel.totalValue.toFixed(2)}</p>
-                          <p className="text-xs text-gray-400 dark:text-gray-500">
-                            {format(fuel.date?.toDate() || new Date(), 'dd/MM HH:mm')} • {fuel.liters.toFixed(2)}L @ R${fuel.pricePerLiter.toFixed(2)}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-right">
-                            <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fuel.km} km</p>
+                  {[...fuelRecords].sort((a, b) => b.km - a.km).map((fuel, index, sortedRecords) => {
+                    const nextFuel = sortedRecords[index + 1];
+                    const kmDriven = nextFuel ? fuel.km - nextFuel.km : 0;
+                    return (
+                      <Card 
+                        key={fuel.id} 
+                        className="border-l-4 border-l-blue-500 group cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                        onClick={() => {
+                          setEditingFuel(fuel);
+                          setShowEditFuelModal(true);
+                        }}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <p className="font-bold text-gray-900 dark:text-white">R$ {fuel.totalValue.toFixed(2)}</p>
+                            <p className="text-xs text-gray-400 dark:text-gray-500">
+                              {format(fuel.date?.toDate() || new Date(), 'dd/MM HH:mm')} • {fuel.liters.toFixed(2)}L @ R${fuel.pricePerLiter.toFixed(2)}
+                            </p>
                           </div>
-                          <ChevronRight size={16} className="text-gray-300 dark:text-gray-700 group-hover:text-blue-500 transition-colors" />
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fuel.km} km</p>
+                              {kmDriven > 0 && (
+                                <p className="text-[10px] text-green-600 dark:text-green-400 font-bold">{kmDriven} km rodados</p>
+                              )}
+                            </div>
+                            <ChevronRight size={16} className="text-gray-300 dark:text-gray-700 group-hover:text-blue-500 transition-colors" />
+                          </div>
                         </div>
-                      </div>
-                    </Card>
-                  ))}
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
 
@@ -3098,25 +3178,30 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
 }
 
 function PartialRevenueForm({ onSubmit, currentRevenue }: { onSubmit: (revenue: number) => void, currentRevenue: number }) {
-  const [revenue, setRevenue] = useState(currentRevenue > 0 ? currentRevenue.toString() : '');
+  const [revenue, setRevenue] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(Number(revenue));
+    if (Number(revenue) > 0) {
+      onSubmit(Number(revenue));
+    }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-4">
+        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Ganhos atuais do turno</p>
+        <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">R$ {currentRevenue.toFixed(2)}</p>
+      </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Faturamento Parcial (R$)</label>
         <CurrencyInput
+          label="Adicionar Valor (R$)"
           value={revenue}
-          onChange={setRevenue}
-          placeholder="Ex: 150,00"
-          required
+          onValueChange={setRevenue}
+          placeholder="Ex: 50,00"
         />
       </div>
-      <Button type="submit" className="w-full py-4">Salvar Faturamento</Button>
+      <Button type="submit" className="w-full py-4" disabled={!revenue || Number(revenue) <= 0}>Adicionar aos Ganhos</Button>
     </form>
   );
 }
@@ -3150,7 +3235,7 @@ function FinishShiftForm({ onSubmit, currentRevenue, initialKm, todayTripsSoFar,
 }
 
 function ExpenseForm({ onSubmit, initialData, onDelete }: { 
-  onSubmit: (date: Date, category: Expense['category'], value: number, km: number) => void,
+  onSubmit: (date: Date, category: Expense['category'], value: number, km: number, paymentMethod: 'Pix' | 'Crédito', installments: number) => void,
   initialData?: Expense,
   onDelete?: () => void
 }) {
@@ -3158,21 +3243,35 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
   const [category, setCategory] = useState<Expense['category']>(initialData ? initialData.category : 'Manutenção');
   const [value, setValue] = useState(initialData ? initialData.value.toString() : '');
   const [km, setKm] = useState(initialData ? initialData.kmAtExpense.toString() : '');
+  const [paymentMethod, setPaymentMethod] = useState<'Pix' | 'Crédito'>(initialData?.paymentMethod || 'Pix');
+  const [installments, setInstallments] = useState(initialData?.installments?.toString() || '1');
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
   const categories = ['Manutenção', 'Pneus', 'Óleo', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'];
 
   return (
     <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
-      <Input label="Data e Hora" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
+      <Input label="Data e Hora da 1ª Parcela" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
       <Select label="Categoria" options={categories} value={category} onChange={e => setCategory(e.target.value as Expense['category'])} />
-      <CurrencyInput label="Valor (R$)" value={value} onValueChange={setValue} />
+      <CurrencyInput label="Valor Total (R$)" value={value} onValueChange={setValue} />
       <Input label="KM do Carro" type="number" inputMode="numeric" value={km} onChange={e => setKm(e.target.value)} />
+      
+      <div className="space-y-3">
+        <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Forma de Pagamento</label>
+        <div className="grid grid-cols-2 gap-3">
+          <Button variant={paymentMethod === 'Pix' ? 'primary' : 'outline'} onClick={() => setPaymentMethod('Pix')}>Pix</Button>
+          <Button variant={paymentMethod === 'Crédito' ? 'primary' : 'outline'} onClick={() => setPaymentMethod('Crédito')}>Crédito</Button>
+        </div>
+      </div>
+
+      {paymentMethod === 'Crédito' && (
+        <Input label="Parcelas" type="number" value={installments} onChange={e => setInstallments(e.target.value)} />
+      )}
       
       <div className="space-y-3">
         {!showConfirmDelete ? (
           <>
-            <Button onClick={() => onSubmit(new Date(date), category, Number(value), Number(km))} className="w-full py-4">
+            <Button onClick={() => onSubmit(new Date(date), category, Number(value), Number(km), paymentMethod, Number(installments))} className="w-full py-4">
               {initialData ? 'Atualizar Despesa' : 'Salvar Despesa'}
             </Button>
             {onDelete && (

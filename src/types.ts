@@ -52,6 +52,8 @@ export interface Expense {
   category: 'Manutenção' | 'Pneus' | 'Óleo' | 'Limpeza' | 'Alimentação' | 'Seguro' | 'IPVA/Licenciamento' | 'Multas' | 'Estacionamento' | 'Pedágio' | 'Internet/Celular' | 'Outros';
   value: number;
   kmAtExpense: number;
+  paymentMethod?: 'Pix' | 'Crédito';
+  installments?: number;
 }
 
 export interface Fuel {
