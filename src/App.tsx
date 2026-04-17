@@ -216,6 +216,7 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showImportPreviewModal, setShowImportPreviewModal] = useState(false);
   const [showAiAnalysisModal, setShowAiAnalysisModal] = useState(false);
+  const [showAiResultModal, setShowAiResultModal] = useState(false);
   const [analysisFilter, setAnalysisFilter] = useState<'day' | 'week' | 'month'>('week');
   const [selectedAnalysisDate, setSelectedAnalysisDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [analysisQuery, setAnalysisQuery] = useState('');
@@ -575,9 +576,11 @@ REGRAS CRÍTICAS:
       });
 
       setAnalysisResult(result.text || "Não foi possível gerar a análise no momento.");
+      setShowAiResultModal(true);
     } catch (error) {
       console.error("AI Analysis error:", error);
       setAnalysisResult("Ocorreu um erro ao processar sua análise. Tente novamente.");
+      setShowAiResultModal(true);
     } finally {
       setIsAnalyzing(false);
     }
@@ -3041,29 +3044,6 @@ REGRAS CRÍTICAS:
             </Button>
           </div>
 
-          <AnimatePresence>
-            {analysisResult && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-4 border border-gray-100 dark:border-gray-800 transition-colors"
-              >
-                <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300 font-medium leading-relaxed markdown-body">
-                  <Markdown>{analysisResult}</Markdown>
-                </div>
-                <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center">
-                  <p className="text-[10px] text-gray-400 uppercase font-bold">Resposta da IA</p>
-                  <button 
-                    onClick={() => setAnalysisResult(null)}
-                    className="text-[10px] text-blue-600 dark:text-blue-400 font-bold uppercase"
-                  >
-                    Limpar
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
           <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
             <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest mb-2">Exemplos de perguntas:</p>
             <div className="flex flex-wrap gap-2">
@@ -3083,6 +3063,37 @@ REGRAS CRÍTICAS:
               ))}
             </div>
           </div>
+        </div>
+      </Modal>
+
+      <Modal isOpen={showAiResultModal} onClose={() => setShowAiResultModal(false)} title="Insights da IA">
+        <div className="space-y-6">
+          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl flex items-center gap-3 border border-blue-100 dark:border-blue-800/50">
+            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-blue-600 dark:text-blue-400">
+              <Sparkles size={18} />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase font-black tracking-widest text-blue-600 dark:text-blue-400">Análise Concluída</p>
+              <p className="text-xs text-blue-800 dark:text-blue-200 font-medium">
+                {analysisFilter === 'day' ? 'Relatório Diário' : analysisFilter === 'week' ? 'Relatório Semanal' : 'Relatório Mensal'}
+              </p>
+            </div>
+          </div>
+
+          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-5 border border-gray-100 dark:border-gray-800 transition-colors">
+            <div className="prose prose-sm max-w-none text-gray-700 dark:text-gray-300 font-medium leading-relaxed markdown-body">
+              <Markdown>{analysisResult || ''}</Markdown>
+            </div>
+          </div>
+
+          <div className="flex gap-3">
+             <Button variant="outline" className="flex-1" onClick={() => setShowAiResultModal(false)}>Fechar</Button>
+             <Button className="flex-1" onClick={() => { setShowAiResultModal(false); setShowAiAnalysisModal(true); }}>Nova Pergunta</Button>
+          </div>
+
+          <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 uppercase font-bold tracking-tight">
+            Esta análise é baseada exclusivamente nos dados do seu histórico.
+          </p>
         </div>
       </Modal>
 
