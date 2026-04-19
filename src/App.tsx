@@ -7,9 +7,10 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { NumericFormat } from 'react-number-format';
 import { 
   Play, Pause, Square, History, DollarSign, BarChart3, 
-  Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, 
-  TrendingUp, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon,
-  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X
+  Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
+  TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon, Target, Activity,
+  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X,
+  Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -23,14 +24,14 @@ import {
 import { 
   collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
-import { format, differenceInSeconds, startOfDay, endOfDay, subDays, subMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell 
 } from 'recharts';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Shift, Trip, Expense, ShiftStatus, ShiftState, Fuel, UserSettings } from './types';
+import { Shift, Trip, Expense, ShiftStatus, ShiftState, Fuel, UserSettings, FixedExpense, Withdrawal } from './types';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -163,7 +164,7 @@ const Select = ({ label, options, ...props }: { label: string, options: string[]
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'costs' | 'insights' | 'settings'>('operation');
+  const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'wallet' | 'insights' | 'settings'>('operation');
   const [historyFilter, setHistoryFilter] = useState<'week' | 'month' | 'all'>('week');
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
@@ -178,6 +179,8 @@ export default function App() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [fuelRecords, setFuelRecords] = useState<Fuel[]>([]);
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
+  const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -194,6 +197,9 @@ export default function App() {
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showFuelModal, setShowFuelModal] = useState(false);
+  const [showFixedExpenseModal, setShowFixedExpenseModal] = useState(false);
+  const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
+  const [showUpdateBalanceModal, setShowUpdateBalanceModal] = useState(false);
   const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showPartialRevenueModal, setShowPartialRevenueModal] = useState(false);
@@ -212,6 +218,7 @@ export default function App() {
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [editingFuel, setEditingFuel] = useState<Fuel | null>(null);
+  const [editingFixedExpense, setEditingFixedExpense] = useState<FixedExpense | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [showImportPreviewModal, setShowImportPreviewModal] = useState(false);
@@ -222,6 +229,9 @@ export default function App() {
   const [analysisQuery, setAnalysisQuery] = useState('');
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showRealtimeAiModal, setShowRealtimeAiModal] = useState(false);
+  const [realtimeAiReport, setRealtimeAiReport] = useState<string | null>(null);
+  const [isGeneratingRealtimeAi, setIsGeneratingRealtimeAi] = useState(false);
   const [parsedImportData, setParsedImportData] = useState<any[] | null>(null);
   const [importText, setImportText] = useState('');
   const [isImportingData, setIsImportingData] = useState(false);
@@ -256,6 +266,17 @@ export default function App() {
     });
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
   }, [shifts, historyFilter]);
+
+  const historySummary = useMemo(() => {
+    const totalRevenue = groupedShifts.reduce((acc, g) => acc + g.totalRevenue, 0);
+    const totalTime = groupedShifts.reduce((acc, g) => acc + g.totalTime, 0);
+    const totalKm = groupedShifts.reduce((acc, g) => acc + g.totalWorkKm, 0);
+    
+    const rph = totalTime > 0 ? totalRevenue / (totalTime / 3600) : 0;
+    const rpkm = totalKm > 0 ? totalRevenue / totalKm : 0;
+    
+    return { totalRevenue, totalTime, totalKm, rph, rpkm };
+  }, [groupedShifts]);
 
   const toggleDay = (dateKey: string) => {
     setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
@@ -309,6 +330,16 @@ export default function App() {
       setFuelRecords(snap.docs.map(d => ({ id: d.id, ...d.data() } as Fuel)));
     }, (err) => handleFirestoreError(err, OperationType.LIST, 'fuel'));
 
+    const qFixed = query(collection(db, 'fixed_expenses'), where('userId', '==', user.uid));
+    const unsubFixed = onSnapshot(qFixed, (snap) => {
+      setFixedExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as FixedExpense)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'fixed_expenses'));
+
+    const qWithdrawals = query(collection(db, 'withdrawals'), where('userId', '==', user.uid), orderBy('date', 'desc'));
+    const unsubWithdrawals = onSnapshot(qWithdrawals, (snap) => {
+      setWithdrawals(snap.docs.map(d => ({ id: d.id, ...d.data() } as Withdrawal)));
+    }, (err) => handleFirestoreError(err, OperationType.LIST, 'withdrawals'));
+
     const unsubSettings = onSnapshot(doc(db, 'settings', user.uid), (snap) => {
       if (snap.exists()) {
         setSettings({ userId: snap.id, ...snap.data() } as UserSettings);
@@ -319,6 +350,8 @@ export default function App() {
           maintenanceCostPerKm: 0.15,
           maintenancePercentage: 10,
           dailyRevenueGoal: 250,
+          monthlyNetGoal: 2000,
+          platformBalance: 0,
           defaultFuelPrice: 5.50,
           avgConsumption: 12.0,
           oilChangeInterval: 10000,
@@ -335,6 +368,8 @@ export default function App() {
       unsubShifts();
       unsubExpenses();
       unsubFuel();
+      unsubFixed();
+      unsubWithdrawals();
       unsubSettings();
     };
   }, [user]);
@@ -566,7 +601,7 @@ Fale sobre:
 REGRAS CRÍTICAS:
 - Responda em Português Brasileiro.
 - Seja MUITO RESUMIDO.
-- Máximo de 700 caracteres.
+- Máximo de 700 caracteres. Se a pergunta pedir um limite menor (ex: 200 caracteres), RESPEITE ESTRITAMENTE esse limite menor.
 - Use bullet points se ajudar na brevidade.
 - Não use introduções longas como "Com base nos dados...". Vá direto ao ponto.`;
 
@@ -846,6 +881,21 @@ REGRAS CRÍTICAS:
 
     if (newState === 'ride' && prevState !== 'ride') {
       updates.totalTrips = (activeShift.totalTrips || 0) + 1;
+      
+      // Auto-create a pending trip to capture start time
+      try {
+        await addDoc(collection(db, 'shifts', activeShift.id, 'trips'), {
+          userId: activeShift.userId,
+          shiftId: activeShift.id,
+          value: 0,
+          durationSeconds: 0,
+          distanceKm: 0,
+          timestamp: serverTimestamp(),
+          startTime: serverTimestamp()
+        });
+      } catch (err) {
+        console.error("Error creating pending trip", err);
+      }
     }
 
     try {
@@ -928,12 +978,30 @@ REGRAS CRÍTICAS:
     }
   };
 
-  const updatePartialRevenue = async (revenueToAdd: number) => {
+  const updatePartialRevenue = async (newRevenueTotal: number, newKm: number) => {
     if (!activeShift) return;
     try {
-      await updateDoc(doc(db, 'shifts', activeShift.id), {
-        totalRevenue: (activeShift.totalRevenue || 0) + revenueToAdd
-      });
+      const diffKm = newKm ? newKm - activeShift.lastKm : 0;
+      const newWorkKm = activeShift.totalWorkKm + Math.max(0, diffKm);
+      
+      const updates: any = {
+        totalRevenue: newRevenueTotal
+      };
+      
+      const diffRevenue = newRevenueTotal - (activeShift.totalRevenue || 0);
+      if (diffRevenue !== 0) {
+        const settingsRef = doc(db, 'settings', user.uid);
+        await updateDoc(settingsRef, {
+          platformBalance: (settings?.platformBalance || 0) + diffRevenue
+        });
+      }
+      
+      if (newKm && diffKm > 0) {
+        updates.lastKm = newKm;
+        updates.totalWorkKm = newWorkKm;
+      }
+      
+      await updateDoc(doc(db, 'shifts', activeShift.id), updates);
       setShowPartialRevenueModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
@@ -994,6 +1062,9 @@ REGRAS CRÍTICAS:
         idleKm = finalWorkKm * (finalIdleTime / totalStateTime);
       }
 
+      // Calculate revenue difference to add to balance
+      const diffRevenue = revenue - (activeShift.totalRevenue || 0);
+
       await updateDoc(doc(db, 'shifts', activeShift.id), {
         status: 'finished',
         endTime: new Date(),
@@ -1012,9 +1083,17 @@ REGRAS CRÍTICAS:
         unproductiveKm,
         idleKm
       });
+      
+      if (diffRevenue !== 0) {
+        const currentBalance = settings?.platformBalance || 0;
+        await updateDoc(doc(db, 'settings', user.uid), {
+          platformBalance: currentBalance + diffRevenue
+        });
+      }
+
       setShowFinishModal(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
+      handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift?.id}`);
     }
   };
 
@@ -1048,9 +1127,13 @@ REGRAS CRÍTICAS:
   };
 
   const addTrip = async (value: number, durationSeconds: number, distanceKm: number) => {
-    if (!user || !selectedShiftId) return;
+    if (!user || !selectedShiftId || !settings) return;
     try {
-      await addDoc(collection(db, 'shifts', selectedShiftId, 'trips'), {
+      const batch = writeBatch(db);
+      
+      // 1. Add trip
+      const newTripRef = doc(collection(db, 'shifts', selectedShiftId, 'trips'));
+      batch.set(newTripRef, {
         userId: user.uid,
         shiftId: selectedShiftId,
         value,
@@ -1058,9 +1141,30 @@ REGRAS CRÍTICAS:
         distanceKm,
         timestamp: serverTimestamp()
       });
+
+      // 2. Update platform balance in settings
+      const settingsRef = doc(db, 'settings', user.uid);
+      batch.update(settingsRef, {
+        platformBalance: (settings.platformBalance || 0) + value
+      });
+
+      // 3. Update shift totalRevenue (Optimistic/Synchronous update for the shift)
+      const shiftRef = doc(db, 'shifts', selectedShiftId);
+      // Note: We don't have the current shift revenue here easily without another get, 
+      // but we can use increment if we want, or just let the trips subcollection fetchers do their job.
+      // However, App.tsx usually has shifts in state.
+      const currentShift = shifts.find(s => s.id === selectedShiftId);
+      if (currentShift) {
+        batch.update(shiftRef, {
+          totalRevenue: (currentShift.totalRevenue || 0) + value,
+          totalTrips: (currentShift.totalTrips || 0) + 1
+        });
+      }
+
+      await batch.commit();
       setShowTripModal(false);
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `shifts/${selectedShiftId}/trips`);
+      handleFirestoreError(err, OperationType.WRITE, `shifts/${selectedShiftId}/trips_batch`);
     }
   };
 
@@ -1140,6 +1244,99 @@ REGRAS CRÍTICAS:
       setShowPastShiftModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'shifts');
+    }
+  };
+
+  const addFixedExpense = async (name: string, amount: number, dueDay: number) => {
+    if (!user) return;
+    try {
+      await addDoc(collection(db, 'fixed_expenses'), {
+        userId: user.uid,
+        name,
+        amount,
+        dueDay,
+        active: true
+      });
+      setShowFixedExpenseModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, 'fixed_expenses');
+    }
+  };
+
+  const updateFixedExpense = async (id: string, name: string, amount: number, dueDay: number) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'fixed_expenses', id), {
+        name,
+        amount,
+        dueDay
+      });
+      setShowFixedExpenseModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `fixed_expenses/${id}`);
+    }
+  };
+
+  const deleteFixedExpense = async (id: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'fixed_expenses', id));
+      setShowFixedExpenseModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `fixed_expenses/${id}`);
+    }
+  };
+
+  const addWithdrawal = async (amount: number, date: Date, fee: number) => {
+    if (!user || !settings) return;
+    try {
+      const batch = writeBatch(db);
+      
+      // 1. Create withdrawal record
+      const newWithdrawalRef = doc(collection(db, 'withdrawals'));
+      batch.set(newWithdrawalRef, {
+        userId: user.uid,
+        date: Timestamp.fromDate(date),
+        amount,
+        fee
+      });
+
+      // 2. Subtract from platform balance
+      const newBalance = (settings.platformBalance || 0) - amount;
+      const settingsRef = doc(db, 'settings', user.uid);
+      batch.update(settingsRef, {
+        platformBalance: newBalance
+      });
+
+      // 3. If there is a fee, record it as a "Taxa Bancária/Saque" expense
+      if (fee > 0) {
+        const newExpenseRef = doc(collection(db, 'expenses'));
+        batch.set(newExpenseRef, {
+          userId: user.uid,
+          date: Timestamp.fromDate(date),
+          category: 'Taxa Bancária/Saque',
+          value: fee,
+          kmAtExpense: lastRecordedKm || 0,
+          paymentMethod: 'Pix'
+        });
+      }
+
+      await batch.commit();
+      setShowWithdrawalModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, 'withdrawals/batch');
+    }
+  };
+
+  const updatePlatformBalance = async (newBalance: number) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'settings', user.uid), {
+        platformBalance: newBalance
+      });
+      setShowUpdateBalanceModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `settings/${user.uid}`);
     }
   };
 
@@ -1371,6 +1568,90 @@ REGRAS CRÍTICAS:
     }
   };
 
+  const generateRealtimeAiAnalysis = async () => {
+    if (!user || !activeShift) return;
+    setIsGeneratingRealtimeAi(true);
+    setShowRealtimeAiModal(true);
+    setRealtimeAiReport(null);
+
+    try {
+      const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKeyToUse) {
+        setRealtimeAiReport("Chave API do Gemini não encontrada nos Ajustes.");
+        setIsGeneratingRealtimeAi(false);
+        return;
+      }
+      const ai = new GoogleGenAI({ apiKey: apiKeyToUse });
+
+      // Current shift metrics
+      const currentHours = elapsedTime / 3600;
+      const currentRpkm = activeShift.lastKm && activeShift.lastKm > activeShift.startKm 
+        ? activeShift.totalRevenue / (activeShift.lastKm - activeShift.startKm) 
+        : 0;
+      const currentRph = currentHours > 0 ? activeShift.totalRevenue / currentHours : 0;
+      const qtdTrips = activeShift.totalTrips || 0;
+      
+      const now = new Date();
+      const currentHour = now.getHours();
+      const nextHour = (currentHour + 1) % 24;
+
+      // Extract all historical trips from the last 30 days with startTime
+      const thrityDaysAgo = subMonths(now, 1);
+      const allHistoricalTrips = Object.values(shiftTrips)
+        .flat()
+        .filter(t => t.startTime && t.startTime.toDate() >= thrityDaysAgo);
+
+      // Helper to calculate average R$/h for a specific hour across history
+      const getStatsForHour = (targetHour: number) => {
+        const tripsInHour = allHistoricalTrips.filter(t => t.startTime!.toDate().getHours() === targetHour);
+        const totalValue = tripsInHour.reduce((acc, t) => acc + t.value, 0);
+        const totalDurationSecs = tripsInHour.reduce((acc, t) => acc + t.durationSeconds, 0);
+        const totalDistance = tripsInHour.reduce((acc, t) => acc + (t.distanceKm || 0), 0);
+        
+        const rph = totalDurationSecs > 0 ? totalValue / (totalDurationSecs / 3600) : 0;
+        const rpkm = totalDistance > 0 ? totalValue / totalDistance : 0;
+        return { rph, rpkm, count: tripsInHour.length };
+      };
+
+      const histCurrent = getStatsForHour(currentHour);
+      const histNext = getStatsForHour(nextHour);
+
+      const prompt = `Você é o estrategista de alta performance de um motorista de aplicativo. Use tom direto e focado em resultado.
+
+[DADOS DO TURNO ATUAL]
+- Rodando há: ${currentHours.toFixed(1)}h
+- Corridas feitas: ${qtdTrips}
+- Faturamento Atual: R$ ${activeShift.totalRevenue.toFixed(2)}
+- R$/Hora atual: R$ ${currentRph.toFixed(2)}
+- R$/Km atual: R$ ${currentRpkm.toFixed(2)}
+
+[HISTÓRICO NOS ÚLTIMOS 30 DIAS]
+- Nesta hora (${currentHour}h): Média de R$ ${histCurrent.rph.toFixed(2)}/h (Baseado em ${histCurrent.count} corridas)
+- Na PRÓXIMA HORA (${nextHour}h): Média de R$ ${histNext.rph.toFixed(2)}/h (Baseado em ${histNext.count} corridas)
+
+[SUA MISSÃO E REGRAS MATEMÁTICAS]
+1. Ideal: >= R$ 40/h | Aceitável: R$ 35 a R$ 39/h | Ruim: R$ 30 a R$ 34/h | Crítico: < R$ 30/h.
+2. Analise a hora atual e a previsão da próxima hora. Se a atual estiver ruim mas a próxima costuma ser excelente, motive-o a continuar. Se ambas forem ruins, sugira pausa/término.
+3. Use NO MÁXIMO 250 caracteres (seja super breve).
+4. Siga este exato formato com bullet points curtos:
+* 🎯 Diagnóstico: [Avalie o agora e a próxima hora]
+* 🛣️ Ação: [Continuar / Pausar / Parar]
+* 💡 Foco Agora: [Dica exata de corrida ex: "Até 5km, max 20min, min R$12"]`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      setRealtimeAiReport(response.text || "Erro ao gerar análise.");
+    } catch (err) {
+      console.error(err);
+      setRealtimeAiReport("Erro de comunicação com a IA.");
+    } finally {
+      setIsGeneratingRealtimeAi(false);
+    }
+  };
+
   // --- Calculations ---
 
   const monthlySummary = useMemo(() => {
@@ -1504,10 +1785,172 @@ REGRAS CRÍTICAS:
     });
     
     return hours.map((h, i) => ({
-      hour: `${i}h`,
+      hour: i,
+      label: `${i}h`,
       avgPerHour: h.seconds > 0 ? h.revenue / (h.seconds / 3600) : 0,
       total: h.revenue
-    })).filter(h => h.total > 0);
+    }));
+  }, [shifts]);
+
+  const heatmapData = useMemo(() => {
+    const days = [0, 1, 2, 3, 4, 5, 6]; // Dom to Sáb
+    const stats: { [key: string]: { revenue: number, seconds: number } } = {};
+    let minH = 23;
+    let maxH = 0;
+    
+    shifts.filter(s => s.status === 'finished').forEach(s => {
+      const date = ensureDate(s.startTime);
+      const day = date.getDay();
+      const startHour = date.getHours();
+      const endHour = s.endTime ? ensureDate(s.endTime).getHours() : startHour;
+      
+      const revenue = s.totalRevenue;
+      const activeSeconds = s.activeTimeSeconds;
+      const durationHours = Math.max(1, (endHour < startHour ? endHour + 24 : endHour) - startHour + 1);
+      
+      for (let i = 0; i < durationHours; i++) {
+        const h = (startHour + i) % 24;
+        const key = `${day}-${h}`;
+        if (!stats[key]) stats[key] = { revenue: 0, seconds: 0 };
+        stats[key].revenue += revenue / durationHours;
+        stats[key].seconds += activeSeconds / durationHours;
+        if (h < minH) minH = h;
+        if (h > maxH) maxH = h;
+      }
+    });
+
+    // Provide some padding or default bounds if too narrow
+    if (minH > maxH) { minH = 5; maxH = 22; }
+    else {
+      minH = Math.max(0, minH - 1);
+      maxH = Math.min(23, maxH + 1);
+    }
+
+    const result: { day: number, hour: number, avgPerHour: number }[] = [];
+    for (let d = 0; d < 7; d++) {
+      for (let h = minH; h <= maxH; h++) {
+        const key = `${d}-${h}`;
+        result.push({
+          day: d,
+          hour: h,
+          avgPerHour: stats[key] && stats[key].seconds > 0 ? stats[key].revenue / (stats[key].seconds / 3600) : 0
+        });
+      }
+    }
+    return { data: result, minH, maxH };
+  }, [shifts]);
+
+  const goalsProjection = useMemo(() => {
+    if (!settings) return null;
+    const now = new Date();
+    const daysRemainingInWeek = 7 - (now.getDay() === 0 ? 7 : now.getDay()); // Assuming week ends on Sun
+    const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+    
+    const weeklyShifts = shifts.filter(s => {
+      const d = ensureDate(s.startTime);
+      return isWithinInterval(d, { start: weekStart, end: weekEnd });
+    });
+    
+    const weeklyRevenue = weeklyShifts.reduce((acc, s) => acc + s.totalRevenue, 0) + (activeShift?.totalRevenue || 0);
+    const weeklyGoal = settings.dailyRevenueGoal * 6; // Assuming 6 days work week
+    const remaining = Math.max(0, weeklyGoal - weeklyRevenue);
+    
+    const workdaySlotsRemaining = Math.max(1, daysRemainingInWeek);
+    const requiredDaily = remaining / workdaySlotsRemaining;
+    
+    return {
+      weeklyRevenue,
+      weeklyGoal,
+      remaining,
+      requiredDaily,
+      daysRemaining: workdaySlotsRemaining
+    };
+  }, [shifts, activeShift, settings]);
+
+  const fuelTrends = useMemo(() => {
+    const sortedFuel = [...fuelRecords].sort((a, b) => ensureDate(a.date).getTime() - ensureDate(b.date).getTime());
+    if (sortedFuel.length < 2) return null;
+    
+    const consumptionHistory: { date: string, kmL: number }[] = [];
+    
+    for (let i = 1; i < sortedFuel.length; i++) {
+      const current = sortedFuel[i];
+      const prev = sortedFuel[i-1];
+      const dist = current.km - prev.km;
+      if (dist > 0 && current.liters > 0) {
+        consumptionHistory.push({
+          date: format(ensureDate(current.date), 'dd/MM'),
+          kmL: dist / current.liters
+        });
+      }
+    }
+    
+    const recent = consumptionHistory.slice(-5);
+    const avgRecent = recent.length > 0 ? recent.reduce((acc, val) => acc + val.kmL, 0) / recent.length : 0;
+    const baseline = settings?.avgConsumption || 12;
+    const diff = baseline > 0 ? ((avgRecent - baseline) / baseline) * 100 : 0;
+    
+    return {
+      history: consumptionHistory,
+      avgRecent,
+      diff,
+      status: diff < -5 ? 'bad' : diff > 5 ? 'good' : 'stable'
+    };
+  }, [fuelRecords, settings]);
+
+  const tripProfile = useMemo(() => {
+    const profile = {
+      short: { revenue: 0, trips: 0 },
+      medium: { revenue: 0, trips: 0 },
+      long: { revenue: 0, trips: 0 }
+    };
+    
+    const finishedShifts = shifts.filter(s => s.status === 'finished');
+    let totalTripsEver = 0;
+
+    finishedShifts.forEach(s => {
+      if (s.totalTrips > 0) {
+        const avgDistance = (s.totalWorkKm || ((s.endKm || 0) - s.startKm)) / s.totalTrips;
+        let bucket;
+        if (avgDistance < 5) bucket = profile.short;
+        else if (avgDistance < 12) bucket = profile.medium;
+        else bucket = profile.long;
+
+        bucket.revenue += s.totalRevenue;
+        bucket.trips += s.totalTrips;
+        totalTripsEver += s.totalTrips;
+      }
+    });
+
+    return {
+      shortPerc: totalTripsEver > 0 ? (profile.short.trips / totalTripsEver) * 100 : 0,
+      shortAvgVal: profile.short.trips > 0 ? profile.short.revenue / profile.short.trips : 0,
+      mediumPerc: totalTripsEver > 0 ? (profile.medium.trips / totalTripsEver) * 100 : 0,
+      mediumAvgVal: profile.medium.trips > 0 ? profile.medium.revenue / profile.medium.trips : 0,
+      longPerc: totalTripsEver > 0 ? (profile.long.trips / totalTripsEver) * 100 : 0,
+      longAvgVal: profile.long.trips > 0 ? profile.long.revenue / profile.long.trips : 0
+    };
+  }, [shifts]);
+
+  const topShifts = useMemo(() => {
+    const now = new Date();
+    const finished = shifts.filter(s => s.status === 'finished' && isSameMonth(ensureDate(s.startTime), now));
+    return {
+      revenue: [...finished].sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 3),
+      rph: [...finished].sort((a, b) => {
+        const rphA = a.activeTimeSeconds > 0 ? a.totalRevenue / (a.activeTimeSeconds / 3600) : 0;
+        const rphB = b.activeTimeSeconds > 0 ? b.totalRevenue / (b.activeTimeSeconds / 3600) : 0;
+        return rphB - rphA;
+      }).slice(0, 3),
+      rpkm: [...finished].sort((a, b) => {
+        const kmA = a.totalWorkKm || (a.endKm - a.startKm);
+        const kmB = b.totalWorkKm || (b.endKm - b.startKm);
+        const rpkA = kmA > 0 ? a.totalRevenue / kmA : 0;
+        const rpkB = kmB > 0 ? b.totalRevenue / kmB : 0;
+        return rpkB - rpkA;
+      }).slice(0, 3)
+    };
   }, [shifts]);
 
   const metrics = useMemo(() => {
@@ -1592,6 +2035,7 @@ REGRAS CRÍTICAS:
       totalFuelValue,
       totalLiters,
       totalCosts: estimatedFuelCost + maintenanceCost,
+      maintenancePercentage: currentMaintPercentage,
       dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0
     };
   }, [shifts, expenses, fuelRecords, insightFilter, settings]);
@@ -1695,6 +2139,37 @@ REGRAS CRÍTICAS:
       totalExpenses30Days
     };
   }, [shifts, expenses, fuelRecords, settings]);
+
+  const planningMetrics = useMemo(() => {
+    if (!settings) return null;
+    
+    const totalFixed = fixedExpenses.reduce((acc, fe) => acc + fe.amount, 0);
+    const monthlyNetGoal = settings.monthlyNetGoal || 2000;
+    const maintenancePercentage = settings.maintenancePercentage || 10;
+    
+    // Estimated monthly fuel based on last 30 days or default
+    const last30DaysFuel = fuelRecords.filter(f => {
+      const d = ensureDate(f.date);
+      return d >= subDays(new Date(), 30);
+    });
+    const monthlyFuel = last30DaysFuel.reduce((acc, f) => acc + f.totalValue, 0) || 1500; // heuristic default if none
+    
+    // Formula: (Revenue * (1 - maint/100)) - fuel - fixed = net
+    // Revenue * (1 - maint/100) = net + fuel + fixed
+    // Revenue = (net + fuel + fixed) / (1 - maint/100)
+    
+    const revenueNeeded = (monthlyNetGoal + monthlyFuel + totalFixed) / (1 - (maintenancePercentage / 100));
+    const dailyNeeded = revenueNeeded / 24; // Average 24 working days
+    
+    return {
+      totalFixed,
+      monthlyNetGoal,
+      monthlyFuel,
+      revenueNeeded,
+      dailyNeeded,
+      maintenancePercentage
+    };
+  }, [fixedExpenses, settings, fuelRecords]);
 
   const chartData = useMemo(() => {
     const finishedShifts = shifts
@@ -1921,30 +2396,17 @@ REGRAS CRÍTICAS:
                 </div>
 
                 {activeShift?.status === 'active' && (
-                  <div className="grid grid-cols-2 gap-4 mt-8">
+                  <div className="mt-8">
                     <Button 
-                      onClick={() => changeShiftState(activeShift.currentState === 'idle' ? 'dispatch' : 'idle')} 
+                      onClick={() => changeShiftState(activeShift.currentState === 'ride' ? 'idle' : 'ride')} 
                       variant="outline"
                       className={cn(
-                        "py-6 border-none transition-all duration-300", 
-                        activeShift.currentState === 'idle' 
-                          ? "bg-red-500 text-white shadow-[0_0_20px_rgba(239,68,68,0.6)] scale-105" 
-                          : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
-                      )} 
-                      icon={Coffee}
-                    >
-                      {activeShift.currentState === 'idle' ? 'Voltar ao Trabalho' : 'Sem Corridas'}
-                    </Button>
-                    <Button 
-                      onClick={() => changeShiftState(activeShift.currentState === 'ride' ? 'dispatch' : 'ride')} 
-                      variant="outline"
-                      className={cn(
-                        "py-6 border-none transition-all duration-300", 
+                        "w-full py-6 border-none transition-all duration-300", 
                         activeShift.currentState === 'ride' 
-                          ? "bg-green-500 text-white shadow-[0_0_20px_rgba(34,197,94,0.6)] scale-105" 
-                          : "bg-white/10 text-white/70 hover:bg-white/20 hover:text-white"
+                          ? "bg-green-500 text-white shadow-[0_0_20px_rgba(34,197,94,0.6)] scale-100" 
+                          : "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:bg-blue-500 scale-100"
                       )} 
-                      icon={Users}
+                      icon={activeShift.currentState === 'ride' ? CheckCircle2 : Users}
                     >
                       {activeShift.currentState === 'ride' ? 'Finalizar Corrida' : 'Com Passageiro'}
                     </Button>
@@ -1952,13 +2414,28 @@ REGRAS CRÍTICAS:
                 )}
 
                 {activeShift?.status === 'active' && (
-                  <Button 
-                    onClick={() => setShowPartialRevenueModal(true)} 
-                    variant="outline" 
-                    className="w-full py-4 mt-4 bg-white/10 text-white/90 border-white/20 hover:bg-white/20"
-                  >
-                    Ganhos (parcial)
-                  </Button>
+                  <div className="grid grid-cols-2 gap-3 mt-4">
+                    <Button 
+                      onClick={() => setShowPartialRevenueModal(true)} 
+                      variant="outline" 
+                      className={cn(
+                        "w-full py-4 text-xs sm:text-sm transition-all duration-500",
+                        elapsedTime >= 3600 && (elapsedTime % 3600) < 300 
+                          ? "animate-pulse-red shadow-[0_0_15px_rgba(239,68,68,0.5)] z-10" 
+                          : "bg-white/10 text-white/90 border-white/20 hover:bg-white/20"
+                      )}
+                    >
+                      Ganhos (parcial)
+                    </Button>
+                    <Button 
+                      onClick={() => generateRealtimeAiAnalysis()} 
+                      variant="outline" 
+                      className="w-full py-4 bg-white/10 text-white/90 border-white/20 hover:bg-white/20 text-xs sm:text-sm"
+                      icon={Sparkles}
+                    >
+                      IA: Devo Continuar?
+                    </Button>
+                  </div>
                 )}
 
                 {settings && (
@@ -1999,50 +2476,6 @@ REGRAS CRÍTICAS:
                 )}
               </Card>
 
-              {/* Métricas do Turno Atual */}
-              {activeShift && activeShiftMetrics && (
-                <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-                  <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">Eficiência do Turno</h3>
-                  
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Tempo Produtivo</p>
-                        <p className="text-lg font-bold text-blue-600 dark:text-blue-400">{formatTime(activeShiftMetrics.rideTime)}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Eficiência</p>
-                        <p className="text-lg font-bold text-green-600 dark:text-green-400">{activeShiftMetrics.efficiency.toFixed(1)}%</p>
-                      </div>
-                    </div>
-
-                    <div className="h-3 rounded-full overflow-hidden flex bg-gray-100 dark:bg-gray-800">
-                      <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.rideTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-green-500" />
-                      <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.dispatchTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-yellow-500" />
-                      <div style={{ width: `${activeShiftMetrics.totalStateTime > 0 ? (activeShiftMetrics.idleTime / activeShiftMetrics.totalStateTime) * 100 : 0}%` }} className="bg-red-500" />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                      <div className="text-green-600 dark:text-green-400">
-                        Com Passageiro<br/>
-                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.rideTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
-                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.rideTime)}</span>
-                      </div>
-                      <div className="text-yellow-600 dark:text-yellow-400">
-                        Indo Buscar<br/>
-                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.dispatchTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
-                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.dispatchTime)}</span>
-                      </div>
-                      <div className="text-red-600 dark:text-red-400">
-                        Sem Corridas<br/>
-                        <span className="text-lg">{activeShiftMetrics.totalStateTime > 0 ? ((activeShiftMetrics.idleTime / activeShiftMetrics.totalStateTime) * 100).toFixed(1) : '0.0'}%</span><br/>
-                        <span className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(activeShiftMetrics.idleTime)}</span>
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              )}
-
               {/* Resumo do Dia */}
               <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
                 <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">Resumo de Hoje</h3>
@@ -2056,12 +2489,20 @@ REGRAS CRÍTICAS:
                     <p className="text-lg font-bold dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
                   </div>
                   <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">R$ / Hora Atual</p>
+                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalTime > 0 ? (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2) : '0.00'}</p>
+                  </div>
+                  <div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">Corridas Feitas</p>
                     <p className="text-lg font-bold dark:text-white">{todayMetrics.totalTrips}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Inicial do Dia</p>
-                    <p className="text-lg font-bold dark:text-white">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Atual do Turno</p>
+                    <p className="text-lg font-bold dark:text-white">{activeShift ? activeShift.lastKm : '--'} km</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">R$ / KM Parcial</p>
+                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {activeShift && activeShift.lastKm > activeShift.startKm ? (activeShift.totalRevenue / (activeShift.lastKm - activeShift.startKm)).toFixed(2) : '0.00'}</p>
                   </div>
                 </div>
               </Card>
@@ -2125,6 +2566,22 @@ REGRAS CRÍTICAS:
                   ))}
                 </div>
               )}
+
+              {activeShift?.status === 'active' && (
+                <div className="mt-8">
+                  <Button 
+                    onClick={() => {
+                        setAnalysisFilter('day');
+                        setAnalysisQuery('Devo continuar rodando agora? Faça uma análise de custo/benefício rápida (max 200 caracteres), estou rodando agora.');
+                        handleHistoryAIAnalysis();
+                    }}
+                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-200 dark:shadow-none transition-all group overflow-hidden relative flex items-center justify-center gap-2"
+                  >
+                    <Sparkles size={18} />
+                    <span>IA: Devo Continuar?</span>
+                  </Button>
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -2154,6 +2611,29 @@ REGRAS CRÍTICAS:
                   <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
                   <button onClick={() => setHistoryFilter('all')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'all' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Tudo</button>
                 </div>
+
+                {shifts.length > 0 && (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl border border-blue-100 dark:border-blue-900/30">
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Faturamento</p>
+                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Tempo Total</p>
+                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">
+                        {Math.floor(historySummary.totalTime / 3600)}h {Math.floor((historySummary.totalTime % 3600) / 60)}m
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Média R$/Hora</p>
+                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.rph.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Média R$/KM</p>
+                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.rpkm.toFixed(2)}</p>
+                    </div>
+                  </div>
+                )}
               </div>
               {shifts.length === 0 ? (
                 <div className="text-center py-20 text-gray-400">
@@ -2195,36 +2675,44 @@ REGRAS CRÍTICAS:
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            className="space-y-3 overflow-hidden"
+                            className="space-y-3 overflow-hidden px-1"
                           >
                             {group.shifts.map((shift, index) => (
-                              <Card key={shift.id} className="hover:border-blue-200 transition-colors cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500">
+                              <Card key={shift.id} className="hover:border-blue-200 transition-all duration-300 cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500 shadow-sm hover:shadow-md bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500">
                                 <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
-                                  <div className="flex justify-between items-center">
+                                  <div className="flex justify-between items-center sm:items-start">
                                     <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <div className="bg-blue-100 dark:bg-blue-900/30 p-1 rounded-md">
-                                          <Car size={14} className="text-blue-600 dark:text-blue-400" />
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <div className="bg-blue-100 dark:bg-blue-900/30 p-1.5 rounded-lg flex items-center justify-center shrink-0">
+                                          <Car size={16} className="text-blue-600 dark:text-blue-400" />
                                         </div>
-                                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                        <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none">
                                           Turno {group.shifts.length - index}
                                         </p>
                                       </div>
-                                      <div className="flex items-center gap-4">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="text-lg font-bold text-gray-900 dark:text-white">
+                                      <div className="flex flex-col sm:flex-row sm:items-end gap-1 sm:gap-4">
+                                        <div className="flex items-baseline gap-1">
+                                          <span className="text-lg sm:text-xl font-black text-gray-900 dark:text-white leading-tight">
                                             R$ {shift.totalRevenue.toFixed(2)}
                                           </span>
                                         </div>
-                                        <div className="flex items-center gap-1 text-gray-400 dark:text-gray-500 text-xs font-medium">
-                                          <Clock size={12} />
-                                          {formatTime(shift.activeTimeSeconds)}
+                                        <div className="flex items-center gap-3">
+                                          <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
+                                            <Clock size={12} className="opacity-70" />
+                                            {formatTime(shift.activeTimeSeconds)}
+                                          </div>
+                                          {shift.totalTrips > 0 && (
+                                            <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
+                                              <Users size={12} className="opacity-70" />
+                                              {shift.totalTrips}
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-2 ml-4">
+                                    <div className="flex items-center gap-2 ml-4 self-center sm:self-start">
                                       <button 
-                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-90" 
+                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-95 shadow-sm" 
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedShiftId(shift.id);
@@ -2232,11 +2720,11 @@ REGRAS CRÍTICAS:
                                         }}
                                         title="Adicionar Corrida"
                                       >
-                                        <Plus size={20} strokeWidth={2.5} />
+                                        <Plus size={20} strokeWidth={3} />
                                       </button>
                                       
                                       <button 
-                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:text-blue-500 dark:hover:text-blue-400 transition-all active:scale-90"
+                                        className="flex w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all active:scale-95 border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingShift(shift);
@@ -2244,14 +2732,14 @@ REGRAS CRÍTICAS:
                                         }}
                                         title="Editar Turno"
                                       >
-                                        <Edit2 size={18} />
+                                        <Edit2 size={16} />
                                       </button>
 
                                       <motion.div 
                                         animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}
                                         className="w-8 h-8 flex items-center justify-center text-gray-300 dark:text-gray-600"
                                       >
-                                        <ChevronRight size={20} />
+                                        <ChevronRight size={24} />
                                       </motion.div>
                                     </div>
                                   </div>
@@ -2270,83 +2758,35 @@ REGRAS CRÍTICAS:
                                           <span>Detalhes do Turno</span>
                                           <span>{shift.totalTrips} Corridas</span>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-3">
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Inicial</p>
-                                            <p className="text-sm font-bold dark:text-white">{shift.startKm} <span className="text-[10px] font-medium text-gray-400">km</span></p>
+                                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Trajeto (KM)</p>
+                                            <div className="flex items-center justify-between text-sm font-bold dark:text-white">
+                                              <span>{shift.startKm}</span>
+                                              <ArrowRight size={12} className="text-gray-300" />
+                                              <span>{shift.endKm || shift.lastKm || '--'}</span>
+                                            </div>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Final</p>
-                                            <p className="text-sm font-bold dark:text-white">{shift.endKm || shift.lastKm || '--'} <span className="text-[10px] font-medium text-gray-400">km</span></p>
-                                          </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">KM Percorrido</p>
+                                          
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Distância Real</p>
                                             <p className="text-sm font-bold dark:text-white">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km</span></p>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">R$ por KM</p>
-                                            <p className="text-sm font-bold text-blue-600 dark:text-blue-400">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</p>
+
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Rentabilidade</p>
+                                            <div className="space-y-1">
+                                              <p className="text-sm font-bold text-blue-600 dark:text-blue-400 leading-none">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}/km</p>
+                                              <p className="text-sm font-bold text-green-600 dark:text-green-400 leading-none">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}/h</p>
+                                            </div>
                                           </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">R$ por Hora</p>
-                                            <p className="text-sm font-bold text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</p>
-                                          </div>
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Consumo</p>
+
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Consumo Médio</p>
                                             <p className="text-sm font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
                                           </div>
                                         </div>
 
-                                        {(() => {
-                                          if (shift.productiveKm === undefined && shift.rideTimeSeconds === undefined) return null;
-                                          
-                                          let rTime = shift.rideTimeSeconds || 0;
-                                          let dTime = shift.dispatchTimeSeconds || 0;
-                                          let iTime = shift.idleTimeSeconds || 0;
-                                          const tTime = rTime + dTime + iTime;
-                                          
-                                          if (tTime > 0 && shift.activeTimeSeconds > 0 && Math.abs(tTime - shift.activeTimeSeconds) > 5) {
-                                            const scale = shift.activeTimeSeconds / tTime;
-                                            rTime *= scale;
-                                            dTime *= scale;
-                                            iTime *= scale;
-                                          }
-
-                                          const rPct = tTime > 0 ? (rTime / tTime) * 100 : 0;
-                                          const dPct = tTime > 0 ? (dTime / tTime) * 100 : 0;
-                                          const iPct = tTime > 0 ? (iTime / tTime) * 100 : 0;
-
-                                          return (
-                                            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
-                                              <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Eficiência do Turno</p>
-                                              
-                                              <div className="h-3 rounded-full overflow-hidden flex bg-gray-100 dark:bg-gray-800 mb-2">
-                                                <div style={{ width: `${rPct}%` }} className="bg-green-500" />
-                                                <div style={{ width: `${dPct}%` }} className="bg-yellow-500" />
-                                                <div style={{ width: `${iPct}%` }} className="bg-red-500" />
-                                              </div>
-
-                                              <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase tracking-wider">
-                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-green-100 dark:border-green-900/30">
-                                                  <p className="text-green-600 dark:text-green-400 mb-1">Com Passageiro</p>
-                                                  <p className="text-lg dark:text-white">{rPct.toFixed(1)}%</p>
-                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(rTime)}</p>
-                                                </div>
-                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-yellow-100 dark:border-yellow-900/30">
-                                                  <p className="text-yellow-600 dark:text-yellow-400 mb-1">Indo Buscar</p>
-                                                  <p className="text-lg dark:text-white">{dPct.toFixed(1)}%</p>
-                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(dTime)}</p>
-                                                </div>
-                                                <div className="bg-white dark:bg-gray-900 p-2 rounded-lg border border-red-100 dark:border-red-900/30">
-                                                  <p className="text-red-600 dark:text-red-400 mb-1">Sem Corrida</p>
-                                                  <p className="text-lg dark:text-white">{iPct.toFixed(1)}%</p>
-                                                  <p className="text-gray-500 dark:text-gray-400 font-normal">{formatTime(iTime)}</p>
-                                                </div>
-                                              </div>
-                                            </div>
-                                          );
-                                        })()}
-                                        
                                         {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
                                           <div className="space-y-2 mt-4">
                                             <div className="flex justify-between items-center">
@@ -2364,37 +2804,41 @@ REGRAS CRÍTICAS:
                                             {shiftTrips[shift.id].map(trip => {
                                               const mins = Math.floor(trip.durationSeconds / 60);
                                               const secs = trip.durationSeconds % 60;
+                                              const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
                                               return (
-                                                <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 p-2 rounded-lg text-sm border border-gray-100 dark:border-gray-800 transition-colors">
-                                                  <div className="flex items-center gap-2">
-                                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                                    <span className="font-medium dark:text-white">R$ {trip.value.toFixed(2)}</span>
-                                                  </div>
-                                                  <div className="flex items-center gap-3 text-gray-400 text-xs">
-                                                    <span>{mins}m {secs}s</span>
-                                                    <span className="w-1 h-1 bg-gray-200 rounded-full" />
-                                                    <span>{trip.distanceKm?.toFixed(2)} km</span>
-                                                    <div className="flex items-center">
-                                                      <button 
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setEditingTrip({ shiftId: shift.id, trip });
-                                                          setShowEditTripModal(true);
-                                                        }}
-                                                        className="p-1.5 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-all"
-                                                      >
-                                                        <Edit2 size={14} />
-                                                      </button>
-                                                      <button 
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setTripToDelete({ shiftId: shift.id, tripId: trip.id });
-                                                        }}
-                                                        className="p-1.5 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
-                                                      >
-                                                        <X size={16} />
-                                                      </button>
+                                                <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 px-3 py-2.5 rounded-xl text-sm border border-gray-100 dark:border-gray-800 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-all hover:border-blue-100 dark:hover:border-blue-900 group/trip">
+                                                  <div className="flex items-center gap-3">
+                                                    <div className="flex flex-col items-center">
+                                                      <div className="w-2 h-2 rounded-full bg-blue-500 mb-1" />
+                                                      {tripHour && <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 tabular-nums">{tripHour}</span>}
                                                     </div>
+                                                    <div className="flex flex-col">
+                                                      <span className="font-bold dark:text-white leading-tight">R$ {trip.value.toFixed(2)}</span>
+                                                      <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium leading-tight">
+                                                        {mins > 0 ? `${mins}m ` : ''}{secs}s {trip.distanceKm ? `• ${trip.distanceKm.toFixed(1)}km` : ''}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                  <div className="flex gap-1 opacity-0 group-hover/trip:opacity-100 transition-opacity">
+                                                    <button 
+                                                      className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setEditingTrip({ shiftId: shift.id, trip });
+                                                        setShowEditTripModal(true);
+                                                      }}
+                                                    >
+                                                      <Edit2 size={14} />
+                                                    </button>
+                                                    <button 
+                                                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setTripToDelete({ shiftId: shift.id, tripId: trip.id });
+                                                      }}
+                                                    >
+                                                      <X size={14} />
+                                                    </button>
                                                   </div>
                                                 </div>
                                               );
@@ -2444,35 +2888,158 @@ REGRAS CRÍTICAS:
             </motion.div>
           )}
 
-          {activeTab === 'costs' && (
+          {activeTab === 'wallet' && (
             <motion.div 
-              key="costs"
+              key="wallet"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               className="space-y-6"
             >
               <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-                <h2 className="text-2xl font-bold dark:text-white">Custos</h2>
+                <h2 className="text-2xl font-bold dark:text-white mb-2">Meu Caixa</h2>
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={exportExpensesToCSV} disabled={expenses.length === 0 && fuelRecords.length === 0} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Exportar</Button>
+                  <Button onClick={() => setShowUpdateBalanceModal(true)} icon={RefreshCw} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Atualizar Saldo</Button>
+                  <Button onClick={() => setShowWithdrawalModal(true)} icon={ArrowDownLeft} className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Saque</Button>
                   <Button onClick={() => setShowFuelModal(true)} icon={FuelIcon} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Abastecer</Button>
-                  <Button onClick={() => setShowExpenseModal(true)} icon={Plus} className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Outro</Button>
+                  <Button onClick={() => setShowExpenseModal(true)} icon={Plus} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Despesa</Button>
                 </div>
               </div>
 
-              {/* Maintenance Reserve 30 Days */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Resumo do Mês (Gasolina e Despesas)</h3>
-                <div className="grid grid-cols-2 gap-3">
-                   <Card>
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Abastecimento Mês</p>
-                      <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {fuelRecords.filter(f => isSameMonth(ensureDate(f.date), new Date())).reduce((acc, f) => acc + f.totalValue, 0).toFixed(2)}</p>
-                   </Card>
-                   <Card>
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase">Outras Despesas Mês</p>
-                      <p className="text-lg font-bold text-red-600 dark:text-red-400">R$ {expenses.filter(e => isSameMonth(ensureDate(e.date), new Date())).reduce((acc, e) => acc + e.value, 0).toFixed(2)}</p>
-                   </Card>
+              {/* Total Balance Overview */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-6 rounded-3xl text-white shadow-xl shadow-blue-500/20 relative overflow-hidden">
+                  <div className="absolute right-0 top-0 opacity-10 pointer-events-none translate-x-4 -translate-y-4">
+                    <Wallet size={120} />
+                  </div>
+                  <p className="text-sm font-medium text-blue-100 mb-1">Saldo Plataforma (Uber)</p>
+                  <h3 className="text-4xl font-black tracking-tight relative z-10">R$ {settings?.platformBalance?.toFixed(2) || '0.00'}</h3>
                 </div>
+
+                {planningMetrics && (
+                  <Card className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/10 dark:to-blue-900/10 border-indigo-100 dark:border-indigo-800/50 p-6 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <div className="bg-indigo-600 p-1.5 rounded-lg">
+                          <Target size={16} className="text-white" />
+                        </div>
+                        <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-300 uppercase tracking-widest">Planejamento Mensal</h3>
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Faturamento Necessário</p>
+                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.revenueNeeded.toFixed(0)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Sugerida</p>
+                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="pt-4 border-t border-indigo-100 dark:border-indigo-800/50">
+                      <div className="flex justify-between text-[10px] font-bold text-indigo-600/80 dark:text-indigo-400/80 uppercase">
+                        <span>Lucro: R$ {planningMetrics.monthlyNetGoal}</span>
+                        <span>Custos: R$ {(planningMetrics.totalFixed + planningMetrics.monthlyFuel + (planningMetrics.revenueNeeded * planningMetrics.maintenancePercentage / 100)).toFixed(0)}</span>
+                      </div>
+                    </div>
+                  </Card>
+                )}
+              </div>
+
+              {/* Fixed Expenses Section */}
+              <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Contas Fixas</h3>
+                  <button 
+                    onClick={() => setShowFixedExpenseModal(true)}
+                    className="text-blue-600 dark:text-blue-400 text-sm font-bold hover:underline"
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+                
+                {fixedExpenses.length === 0 ? (
+                  <Card className="text-center py-6 text-gray-500">
+                    <AlertCircle className="mx-auto mb-2 opacity-20" size={32} />
+                    <p className="text-sm">Nenhuma conta fixa cadastrada.</p>
+                  </Card>
+                ) : (
+                  <div className="space-y-3">
+                    {fixedExpenses.map(fe => {
+                      const today = new Date().getDate();
+                      let daysUntilDue = fe.dueDay - today;
+                      if (daysUntilDue < 0) {
+                        // next month
+                        const now = new Date();
+                        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, fe.dueDay);
+                        daysUntilDue = differenceInDays(nextMonth, now);
+                      }
+                      return (
+                        <Card key={fe.id} className="flex justify-between items-center group relative overflow-hidden">
+                          {daysUntilDue <= 3 && daysUntilDue >= 0 && (
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
+                          )}
+                          <div className="flex items-center gap-4">
+                            <div className={cn("p-3 rounded-2xl transition-colors", daysUntilDue <= 3 && daysUntilDue >= 0 ? "bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400")}>
+                               <CalendarIcon size={20} />
+                            </div>
+                            <div>
+                               <p className="font-bold text-gray-900 dark:text-white leading-tight">{fe.name}</p>
+                               <p className={cn("text-xs font-medium", daysUntilDue <= 3 && daysUntilDue >= 0 ? "text-red-500" : "text-gray-500")}>
+                                 Vence dia {fe.dueDay} (em {daysUntilDue} dias)
+                               </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <p className="font-bold text-lg dark:text-white">R$ {fe.amount.toFixed(2)}</p>
+                            <button 
+                              className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                              onClick={() => {
+                                setEditingFixedExpense(fe);
+                                setShowFixedExpenseModal(true);
+                              }}
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                          </div>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Withdrawals History */}
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Últimos Saques</h3>
+                {withdrawals.length === 0 ? (
+                  <Card className="text-center py-6 text-gray-500">
+                    <p className="text-sm">Nenhum saque registrado.</p>
+                  </Card>
+                ) : (
+                  <div className="space-y-3">
+                    {withdrawals.slice(0, 5).map(w => (
+                      <Card key={w.id} className="flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                           <div className="bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400 p-2 rounded-xl">
+                              <ArrowUpRight size={18} />
+                           </div>
+                           <div>
+                             <p className="font-bold text-gray-900 dark:text-white leading-tight">Transferência</p>
+                             <p className="text-xs text-gray-500">{format(w.date.toDate(), 'dd/MM/yyyy HH:mm')}</p>
+                           </div>
+                        </div>
+                        <div className="text-right">
+                           <p className="font-bold text-gray-900 dark:text-white">R$ {w.amount.toFixed(2)}</p>
+                           {w.fee > 0 && <p className="text-[10px] text-red-500">Taxa: R$ {w.fee.toFixed(2)}</p>}
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Maintenance Reserve 30 Days (Moved Here) */}
+              <div className="space-y-3 pt-6">
                 <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mt-4">Resumo de Manutenção (Últimos 30 Dias)</h3>
                 <Card className="bg-gradient-to-br from-gray-900 to-gray-800 text-white border-none shadow-xl overflow-hidden relative">
                   <div className="absolute top-0 right-0 p-4 opacity-10">
@@ -2730,12 +3297,18 @@ REGRAS CRÍTICAS:
                           <span className="font-bold text-orange-400">R$ {metrics.personalFuelCost.toFixed(2)} <span className="text-xs text-gray-500">({metrics.personalFuelLiters.toFixed(1)}L)</span></span>
                         </div>
                         <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                          <span className="text-gray-400 text-sm">Manutenção (10%)</span>
-                          <span className="font-bold">R$ {metrics.maintenanceCost.toFixed(2)}</span>
+                          <span className="text-gray-400 text-sm">Manutenção ({metrics.maintenancePercentage}%)</span>
+                          <span className="font-bold underline decoration-gray-500/50 underline-offset-4">R$ {metrics.maintenanceCost.toFixed(2)}</span>
                         </div>
-                        <div className="flex justify-between items-center pt-2">
-                          <span className="text-lg font-bold">Lucro Líquido Estimado</span>
-                          <span className="text-2xl font-bold text-green-400">R$ {metrics.estimatedProfit.toFixed(2)}</span>
+                        <div className="space-y-4 pt-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-sm font-medium text-gray-300">Lucro (Sem Reserva Manut.)</span>
+                            <span className="text-xl font-bold text-blue-400">R$ {(metrics.totalRevenue - metrics.estimatedFuelCost).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-lg font-bold">Lucro Líquido Final</span>
+                            <span className="text-2xl font-bold text-green-400">R$ {metrics.estimatedProfit.toFixed(2)}</span>
+                          </div>
                         </div>
                       </div>
                     </Card>
@@ -2797,6 +3370,246 @@ REGRAS CRÍTICAS:
                     </Card>
                   </div>
 
+                  {/* Projeção de Metas */}
+                  {goalsProjection && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Projeção de Meta Semanal</h3>
+                      <Card className="bg-blue-600 text-white p-6 relative overflow-hidden">
+                        <div className="absolute -right-4 -bottom-4 opacity-10">
+                          <Target size={120} />
+                        </div>
+                        <div className="relative z-10 space-y-4">
+                          <div className="flex justify-between items-end">
+                            <div>
+                              <p className="text-blue-100 text-xs font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
+                              <p className="text-3xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight">Meta</p>
+                              <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
+                            </div>
+                          </div>
+                          
+                          <div className="w-full bg-blue-700/50 h-3 rounded-full overflow-hidden border border-blue-500/30">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${Math.min(100, (goalsProjection.weeklyRevenue / goalsProjection.weeklyGoal) * 100)}%` }}
+                              className="bg-white h-full shadow-[0_0_15px_rgba(255,255,255,0.5)]"
+                            />
+                          </div>
+
+                          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10">
+                            <div className="flex items-center gap-3">
+                              <div className="bg-white/20 p-2 rounded-xl">
+                                <Sparkles size={18} className="text-white" />
+                              </div>
+                              <div>
+                                <p className="text-[10px] text-blue-100 font-bold uppercase">Estimativa para bater a meta</p>
+                                <p className="text-sm font-bold">
+                                  Precisa de <span className="text-yellow-300">R$ {goalsProjection.requiredDaily.toFixed(2)} / dia</span> nos próximos {goalsProjection.daysRemaining} dias.
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Mapa de Calor de Ganhos */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Mapa de Ganhos (Dia vs Hora)</h3>
+                    <Card className="p-4 overflow-x-auto">
+                      <div className="min-w-[600px]">
+                        <div className="flex mb-2">
+                          <div className="w-10 shrink-0" />
+                          {Array.from({ length: heatmapData.maxH - heatmapData.minH + 1 }).map((_, i) => (
+                            <div key={i} className="flex-1 text-[8px] font-bold text-gray-400 text-center">{heatmapData.minH + i}h</div>
+                          ))}
+                        </div>
+                        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((dayName, d) => (
+                          <div key={d} className="flex items-center gap-1 mb-1">
+                            <div className="w-10 shrink-0 text-[10px] font-bold text-gray-400 uppercase">{dayName}</div>
+                            {Array.from({ length: heatmapData.maxH - heatmapData.minH + 1 }).map((_, i) => {
+                              const h = heatmapData.minH + i;
+                              const cell = heatmapData.data.find(cd => cd.day === d && cd.hour === h);
+                              const val = cell?.avgPerHour || 0;
+                              
+                              // Color logic
+                              let bg = 'bg-gray-50 dark:bg-gray-800/50';
+                              if (val > 45) bg = 'bg-green-600 dark:bg-green-500';
+                              else if (val > 35) bg = 'bg-green-500 dark:bg-green-600/80';
+                              else if (val > 25) bg = 'bg-blue-500 dark:bg-blue-600/80';
+                              else if (val > 15) bg = 'bg-blue-300 dark:bg-blue-800/40';
+                              else if (val > 0) bg = 'bg-blue-100 dark:bg-blue-900/20';
+                              
+                              return (
+                                <div 
+                                  key={h} 
+                                  title={`${dayName} ${h}h: R$ ${val.toFixed(2)}/h`}
+                                  className={cn("flex-1 h-6 rounded-sm transition-all hover:scale-110 cursor-help", bg)}
+                                />
+                              );
+                            })}
+                          </div>
+                        ))}
+                        <div className="mt-4 flex items-center justify-center gap-4 text-[10px] font-bold text-gray-400 uppercase">
+                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-gray-100 dark:bg-gray-800" /> Sem dados</div>
+                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-blue-100 dark:bg-blue-900/40" /> Baixo</div>
+                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-blue-500" /> Bom</div>
+                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-green-600" /> Excelente</div>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+
+                  {/* Tendência de Consumo & Perfil */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Tendência de Consumo</h3>
+                      <Card className={cn(
+                        "p-5 border-l-4",
+                        fuelTrends?.status === 'bad' ? "border-l-red-500" : fuelTrends?.status === 'good' ? "border-l-green-500" : "border-l-blue-500"
+                      )}>
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
+                            <Activity size={18} className="text-gray-600 dark:text-gray-400" />
+                          </div>
+                          <div className={cn(
+                            "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase",
+                            fuelTrends?.status === 'bad' ? "bg-red-100 text-red-700" : fuelTrends?.status === 'good' ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
+                          )}>
+                            {fuelTrends?.status === 'bad' ? <TrendingDown size={12} /> : <TrendingUp size={12} />}
+                            {Math.abs(fuelTrends?.diff || 0).toFixed(1)}% {fuelTrends?.status === 'bad' ? 'Pior' : 'Melhor'}
+                          </div>
+                        </div>
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Eficácia Recente</p>
+                        <p className="text-2xl font-black dark:text-white">{fuelTrends?.avgRecent.toFixed(1)} <span className="text-xs font-bold text-gray-400">KM/L</span></p>
+                        
+                        {fuelTrends?.status === 'bad' && (
+                          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-800/40">
+                            <p className="text-[10px] text-red-700 dark:text-red-400 font-bold leading-tight uppercase">
+                              ⚠️ Alerta: Consumo subiu! Verifique manutenção ou pneus.
+                            </p>
+                          </div>
+                        )}
+                      </Card>
+                    </div>
+
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Perfil de Corridas</h3>
+                      <Card className="p-5">
+                        <div className="flex justify-between items-center mb-6">
+                          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Baseado no seu Histórico</p>
+                          <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
+                            <MapPin size={18} className="text-gray-600 dark:text-gray-400" />
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          {[
+                            { label: 'Curtas (< 5km)', val: tripProfile.shortPerc, avg: tripProfile.shortAvgVal, color: 'bg-blue-400' },
+                            { label: 'Médias (5-12km)', val: tripProfile.mediumPerc, avg: tripProfile.mediumAvgVal, color: 'bg-blue-600' },
+                            { label: 'Longas (> 12km)', val: tripProfile.longPerc, avg: tripProfile.longAvgVal, color: 'bg-blue-800' }
+                          ].map(p => (
+                            <div key={p.label} className="space-y-1.5">
+                              <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500 items-end">
+                                <div className="space-y-0.5">
+                                  <span className="block">{p.label}</span>
+                                  <span className="text-gray-400 dark:text-gray-500 text-[9px]">
+                                    Média: R$ {p.avg.toFixed(2)}
+                                  </span>
+                                </div>
+                                <span className="text-sm dark:text-gray-300">{p.val.toFixed(0)}%</span>
+                              </div>
+                              <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden">
+                                <motion.div 
+                                  initial={{ width: 0 }}
+                                  animate={{ width: `${p.val}%` }}
+                                  className={cn("h-full", p.color)}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </Card>
+                    </div>
+                  </div>
+
+                  {/* Top Turnos - Ranking */}
+                  <div className="space-y-4">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">🏆 Hall da Fama (Mês Atual)</h3>
+                    <Card className="p-5">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-4">
+                        {/* Melhor Faturamento */}
+                        <div className="space-y-3">
+                          <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest ml-1 text-center md:text-left">Top Faturamento</p>
+                          <div className="space-y-2">
+                            {topShifts.revenue.length === 0 ? (
+                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                            ) : topShifts.revenue.map((s, i) => (
+                              <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                                <div className="flex items-center gap-3">
+                                  <span className={cn(
+                                    "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                    i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
+                                  )}>{i+1}º</span>
+                                  <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                </div>
+                                <p className="font-black text-blue-600 dark:text-blue-400">R$ {s.totalRevenue.toFixed(2)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Melhor R$/Hora */}
+                        <div className="space-y-3">
+                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest ml-1 text-center md:text-left">Top R$ / Hora</p>
+                          <div className="space-y-2">
+                            {topShifts.rph.length === 0 ? (
+                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                            ) : topShifts.rph.map((s, i) => (
+                              <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                                <div className="flex items-center gap-3">
+                                  <span className={cn(
+                                    "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                    i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
+                                  )}>{i+1}º</span>
+                                  <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                </div>
+                                <p className="font-black text-green-600 dark:text-green-400">R$ {(s.totalRevenue / (s.activeTimeSeconds / 3600)).toFixed(2)}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Melhor R$/KM */}
+                        <div className="space-y-3">
+                          <p className="text-[10px] font-black text-purple-600 dark:text-purple-400 uppercase tracking-widest ml-1 text-center md:text-left">Top R$ / KM</p>
+                          <div className="space-y-2">
+                            {topShifts.rpkm.length === 0 ? (
+                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                            ) : topShifts.rpkm.map((s, i) => {
+                              const km = s.totalWorkKm || (s.endKm - s.startKm);
+                              return (
+                                <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                                  <div className="flex items-center gap-3">
+                                    <span className={cn(
+                                      "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                      i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
+                                    )}>{i+1}º</span>
+                                    <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                  </div>
+                                  <p className="font-black text-purple-600 dark:text-purple-400">R$ {(km > 0 ? s.totalRevenue / km : 0).toFixed(2)}</p>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  </div>
+
                   {/* AI Analysis */}
                   <div className="space-y-3">
                     <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 ml-1">
@@ -2830,114 +3643,6 @@ REGRAS CRÍTICAS:
                       )}
                     </AnimatePresence>
                   </div>
-
-                  {/* Evolução */}
-                  <Card className="p-0 overflow-hidden">
-                    <div className="p-4 border-b border-gray-50 dark:border-gray-800 transition-colors">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Evolução Recente</h3>
-                    </div>
-                    <div className="h-48 w-full p-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1f2937" : "#f0f0f0"} />
-                          <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <Tooltip 
-                            contentStyle={{ 
-                              borderRadius: '12px', 
-                              border: 'none', 
-                              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                              backgroundColor: darkMode ? '#111827' : '#ffffff',
-                              color: darkMode ? '#ffffff' : '#000000'
-                            }}
-                            itemStyle={{ color: darkMode ? '#ffffff' : '#000000' }}
-                            cursor={{ fill: darkMode ? '#1f2937' : '#f3f4f6' }}
-                          />
-                          <Bar dataKey="revenue" name="Faturamento" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </Card>
-
-                  {/* Melhores Dias da Semana */}
-                  <Card className="p-0 overflow-hidden">
-                    <div className="p-4 border-b border-gray-50 dark:border-gray-800 transition-colors">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Desempenho por Dia (R$/Hora)</h3>
-                    </div>
-                    <div className="h-48 w-full p-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={bestDaysData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1f2937" : "#f0f0f0"} />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <Tooltip 
-                            contentStyle={{ 
-                              borderRadius: '12px', 
-                              border: 'none', 
-                              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                              backgroundColor: darkMode ? '#111827' : '#ffffff',
-                              color: darkMode ? '#ffffff' : '#000000'
-                            }}
-                            itemStyle={{ color: darkMode ? '#ffffff' : '#000000' }}
-                            cursor={{ fill: darkMode ? '#1f2937' : '#f3f4f6' }}
-                            formatter={(value: number) => [`R$ ${value.toFixed(2)}/h`, 'Média']}
-                          />
-                          <Bar dataKey="avgPerHour" name="Média R$/h" radius={[4, 4, 0, 0]}>
-                            {bestDaysData.map((entry, index) => {
-                              const maxAvg = Math.max(...bestDaysData.map(d => d.avgPerHour));
-                              const isMax = entry.avgPerHour > 0 && entry.avgPerHour === maxAvg;
-                              return <Cell key={`cell-${index}`} fill={isMax ? '#3b82f6' : '#9ca3af'} />;
-                            })}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="px-4 pb-4">
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500 font-medium text-center">
-                        O gráfico mostra a média de R$ por hora trabalhada em cada dia da semana.
-                      </p>
-                    </div>
-                  </Card>
-
-                  {/* Melhores Horários */}
-                  <Card className="p-0 overflow-hidden">
-                    <div className="p-4 border-b border-gray-50 dark:border-gray-800 transition-colors">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Melhores Horários (R$/Hora)</h3>
-                    </div>
-                    <div className="h-48 w-full p-4">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={bestHoursData}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? "#1f2937" : "#f0f0f0"} />
-                          <XAxis dataKey="hour" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9ca3af' }} />
-                          <Tooltip 
-                            contentStyle={{ 
-                              borderRadius: '12px', 
-                              border: 'none', 
-                              boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                              backgroundColor: darkMode ? '#111827' : '#ffffff',
-                              color: darkMode ? '#ffffff' : '#000000'
-                            }}
-                            itemStyle={{ color: darkMode ? '#ffffff' : '#000000' }}
-                            cursor={{ fill: darkMode ? '#1f2937' : '#f3f4f6' }}
-                            formatter={(value: number) => [`R$ ${value.toFixed(2)}/h`, 'Média']}
-                          />
-                          <Bar dataKey="avgPerHour" name="Média R$/h" radius={[4, 4, 0, 0]}>
-                            {bestHoursData.map((entry, index) => {
-                              const maxAvg = Math.max(...bestHoursData.map(d => d.avgPerHour));
-                              const isMax = entry.avgPerHour > 0 && entry.avgPerHour === maxAvg;
-                              return <Cell key={`cell-${index}`} fill={isMax ? '#10b981' : '#9ca3af'} />;
-                            })}
-                          </Bar>
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                    <div className="px-4 pb-4">
-                      <p className="text-[10px] text-gray-400 dark:text-gray-500 font-medium text-center">
-                        O gráfico mostra a média de R$ por hora em cada faixa de horário.
-                      </p>
-                    </div>
-                  </Card>
                 </>
               )}
             </motion.div>
@@ -2967,7 +3672,7 @@ REGRAS CRÍTICAS:
       <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 px-2 sm:px-6 py-3 flex justify-between items-center z-40 shadow-2xl transition-colors">
         <NavButton active={activeTab === 'operation'} onClick={() => setActiveTab('operation')} icon={Play} label="Turno" />
         <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={History} label="Histórico" />
-        <NavButton active={activeTab === 'costs'} onClick={() => setActiveTab('costs')} icon={DollarSign} label="Custos" />
+        <NavButton active={activeTab === 'wallet'} onClick={() => setActiveTab('wallet')} icon={Wallet} label="Meu Caixa" />
         <NavButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')} icon={BarChart3} label="Insights" />
         <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={SettingsIcon} label="Ajustes" />
       </nav>
@@ -3132,7 +3837,7 @@ REGRAS CRÍTICAS:
       </Modal>
 
       <Modal isOpen={showPartialRevenueModal} onClose={() => setShowPartialRevenueModal(false)} title="Faturamento Parcial">
-        <PartialRevenueForm onSubmit={updatePartialRevenue} currentRevenue={activeShift?.totalRevenue || 0} />
+        <PartialRevenueForm onSubmit={updatePartialRevenue} currentRevenue={activeShift?.totalRevenue || 0} initialKm={lastRecordedKm} />
       </Modal>
 
       <Modal isOpen={showPastShiftModal} onClose={() => setShowPastShiftModal(false)} title="Registrar Turno Passado">
@@ -3249,21 +3954,51 @@ REGRAS CRÍTICAS:
         )}
       </Modal>
 
+      <Modal isOpen={showFixedExpenseModal} onClose={() => { setShowFixedExpenseModal(false); setEditingFixedExpense(null); }} title={editingFixedExpense ? "Editar Conta Fixa" : "Nova Conta Fixa"}>
+        <FixedExpenseForm 
+          initialData={editingFixedExpense} 
+          onSubmit={(name, amount, dueDay) => 
+            editingFixedExpense 
+              ? updateFixedExpense(editingFixedExpense.id, name, amount, dueDay) 
+              : addFixedExpense(name, amount, dueDay)
+          } 
+          onDelete={editingFixedExpense ? () => deleteFixedExpense(editingFixedExpense.id) : undefined}
+        />
+      </Modal>
+
+      <Modal isOpen={showWithdrawalModal} onClose={() => setShowWithdrawalModal(false)} title="Novo Saque">
+        <WithdrawalForm onSubmit={addWithdrawal} platformBalance={settings?.platformBalance || 0} />
+      </Modal>
+
+      <Modal isOpen={showUpdateBalanceModal} onClose={() => setShowUpdateBalanceModal(false)} title="Atualizar Saldo">
+        <UpdateBalanceForm onSubmit={updatePlatformBalance} currentBalance={settings?.platformBalance || 0} />
+      </Modal>
+
       <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} title="Detalhar Corridas">
         {selectedShiftId && (
           <TripBatchForm 
             shift={shifts.find(s => s.id === selectedShiftId)!}
-            existingTripsCount={shiftTrips[selectedShiftId]?.length || 0}
+            existingTrips={shiftTrips[selectedShiftId] || []}
             onSubmit={async (trips) => {
               for (const trip of trips) {
-                await addDoc(collection(db, 'shifts', selectedShiftId, 'trips'), {
-                  userId: user?.uid,
-                  shiftId: selectedShiftId,
-                  value: trip.value,
-                  durationSeconds: trip.durationSeconds,
-                  distanceKm: trip.distanceKm,
-                  timestamp: serverTimestamp()
-                });
+                if (trip.id) {
+                  await updateDoc(doc(db, 'shifts', selectedShiftId, 'trips', trip.id), {
+                    value: trip.value,
+                    durationSeconds: trip.durationSeconds,
+                    distanceKm: trip.distanceKm,
+                    startTime: trip.startTime ? Timestamp.fromDate(trip.startTime) : null
+                  });
+                } else {
+                  await addDoc(collection(db, 'shifts', selectedShiftId, 'trips'), {
+                    userId: user?.uid,
+                    shiftId: selectedShiftId,
+                    value: trip.value,
+                    durationSeconds: trip.durationSeconds,
+                    distanceKm: trip.distanceKm,
+                    timestamp: serverTimestamp(),
+                    startTime: trip.startTime ? Timestamp.fromDate(trip.startTime) : null
+                  });
+                }
               }
               setShowTripModal(false);
             }} 
@@ -3321,9 +4056,39 @@ REGRAS CRÍTICAS:
         {editingTrip && (
           <TripForm 
             initialData={editingTrip.trip}
-            onSubmit={(data) => updateTrip(editingTrip.shiftId, editingTrip.trip.id, data)}
+            onSubmit={(data) => {
+              const tripUpdate: Partial<Trip> = {
+                value: data.value,
+                durationSeconds: data.durationSeconds,
+                distanceKm: data.distanceKm,
+              };
+              if (data.startTime) {
+                tripUpdate.startTime = Timestamp.fromDate(data.startTime);
+              } else {
+                tripUpdate.startTime = null as any; // Using any as Firestore accept nulls for delete FieldValue.delete() but it's simpler
+              }
+              return updateTrip(editingTrip.shiftId, editingTrip.trip.id, tripUpdate);
+            }}
           />
         )}
+      </Modal>
+
+      <Modal isOpen={showRealtimeAiModal} onClose={() => setShowRealtimeAiModal(false)} title="Análise Rápida de Turno (IA)">
+        <div className="space-y-6">
+          {isGeneratingRealtimeAi ? (
+            <div className="flex flex-col items-center justify-center py-12 space-y-4">
+              <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-gray-500 font-medium">A IA está analisando seu turno e o histórico das próximas horas...</p>
+            </div>
+          ) : (
+            <div className="prose dark:prose-invert max-w-none text-sm space-y-2">
+              <Markdown>{realtimeAiReport || ''}</Markdown>
+            </div>
+          )}
+          <Button onClick={() => setShowRealtimeAiModal(false)} className="w-full" variant="outline">
+            Fechar
+          </Button>
+        </div>
       </Modal>
     </div>
   );
@@ -3435,31 +4200,47 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
   );
 }
 
-function PartialRevenueForm({ onSubmit, currentRevenue }: { onSubmit: (revenue: number) => void, currentRevenue: number }) {
-  const [revenue, setRevenue] = useState('');
+function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit: (revenue: number, km: number) => void, currentRevenue: number, initialKm: number }) {
+  const [revenue, setRevenue] = useState(currentRevenue > 0 ? currentRevenue.toString() : '');
+  const [km, setKm] = useState('');
+
+  // Use initialKm when modal opens if "km" is empty, but we let the user edit
+  useEffect(() => {
+    if (!km && initialKm) {
+        setKm(initialKm.toString());
+    }
+  }, [initialKm, km]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (Number(revenue) > 0) {
-      onSubmit(Number(revenue));
+    if (Number(revenue) >= 0) {
+      onSubmit(Number(revenue), Number(km));
     }
   };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-4">
-        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Ganhos atuais do turno</p>
+        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Ganhos atuais registrados</p>
         <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">R$ {currentRevenue.toFixed(2)}</p>
       </div>
-      <div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <CurrencyInput
-          label="Adicionar Valor (R$)"
+          label="Total Atualizado (R$)"
           value={revenue}
           onValueChange={setRevenue}
-          placeholder="Ex: 50,00"
+          placeholder="Ex: 50.00"
+        />
+        <Input 
+          label="KM Atual do Painel" 
+          type="number" 
+          inputMode="numeric"
+          value={km} 
+          onChange={e => setKm(e.target.value)} 
+          placeholder="Ex: 45050"
         />
       </div>
-      <Button type="submit" className="w-full py-4" disabled={!revenue || Number(revenue) <= 0}>Adicionar aos Ganhos</Button>
+      <Button type="submit" className="w-full py-4" disabled={!revenue || Number(revenue) < 0 || !km}>Atualizar Faturamento e KM</Button>
     </form>
   );
 }
@@ -3691,8 +4472,9 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
 
 function TripForm({ initialData, onSubmit }: { 
   initialData: Trip,
-  onSubmit: (data: { value: number, durationSeconds: number, distanceKm: number }) => Promise<void> | void 
+  onSubmit: (data: { value: number, durationSeconds: number, distanceKm: number, startTime?: Date }) => Promise<void> | void 
 }) {
+  const [startTime, setStartTime] = useState(initialData.startTime ? format(initialData.startTime.toDate(), "yyyy-MM-dd'T'HH:mm") : '');
   const [value, setValue] = useState(initialData.value.toString());
   const [durationMin, setDurationMin] = useState(Math.floor(initialData.durationSeconds / 60).toString());
   const [durationSec, setDurationSec] = useState((initialData.durationSeconds % 60).toString());
@@ -3702,6 +4484,12 @@ function TripForm({ initialData, onSubmit }: {
   return (
     <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
       <div className="grid grid-cols-1 gap-4">
+        <Input 
+          label="Hora de Início" 
+          type="datetime-local" 
+          value={startTime} 
+          onChange={e => setStartTime(e.target.value)} 
+        />
         <CurrencyInput 
           label="Valor (R$)" 
           value={value} 
@@ -3742,7 +4530,8 @@ function TripForm({ initialData, onSubmit }: {
             await onSubmit({ 
               value: Number(value), 
               durationSeconds: (Number(durationMin) * 60) + Number(durationSec),
-              distanceKm: Number(distance)
+              distanceKm: Number(distance),
+              startTime: startTime ? new Date(startTime) : undefined
             });
           } finally {
             setIsSubmitting(false);
@@ -3756,22 +4545,51 @@ function TripForm({ initialData, onSubmit }: {
   );
 }
 
-function TripBatchForm({ shift, existingTripsCount, onSubmit }: { 
+function TripBatchForm({ shift, existingTrips, onSubmit }: { 
   shift: Shift, 
-  existingTripsCount: number,
-  onSubmit: (trips: { value: number, durationSeconds: number, distanceKm: number }[]) => Promise<void> | void 
+  existingTrips: Trip[],
+  onSubmit: (trips: { id?: string, value: number, durationSeconds: number, distanceKm: number, startTime?: Date }[]) => Promise<void> | void 
 }) {
-  const remainingTrips = Math.max(0, shift.totalTrips - existingTripsCount);
-  const [trips, setTrips] = useState(Array(remainingTrips).fill({ value: '', durationMin: '', durationSec: '', distance: '' }));
+  const pendingTrips = existingTrips.filter(t => t.value === 0 && t.distanceKm === 0);
+  const detailedTripsCount = existingTrips.length - pendingTrips.length;
+  const missingCount = Math.max(0, shift.totalTrips - existingTrips.length);
+  
+  const [tripsData, setTripsData] = useState(() => {
+    const data = [];
+    // 1. Add pending trips
+    for (const t of pendingTrips) {
+      data.push({
+        id: t.id,
+        value: '',
+        durationMin: '',
+        durationSec: '',
+        distance: '',
+        startTime: t.startTime ? format(t.startTime.toDate(), "yyyy-MM-dd'T'HH:mm") : ''
+      });
+    }
+    // 2. Add missing empty slots
+    for (let i = 0; i < missingCount; i++) {
+        data.push({
+            id: undefined,
+            value: '',
+            durationMin: '',
+            durationSec: '',
+            distance: '',
+            startTime: ''
+        });
+    }
+    return data;
+  });
+
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const updateTrip = (index: number, field: string, val: string) => {
-    const newTrips = [...trips];
+    const newTrips = [...tripsData];
     newTrips[index] = { ...newTrips[index], [field]: val };
-    setTrips(newTrips);
+    setTripsData(newTrips);
   };
 
-  if (remainingTrips === 0) {
+  if (tripsData.length === 0) {
     return (
       <div className="text-center py-8 space-y-4">
         <CheckCircle2 size={48} className="mx-auto text-green-500" />
@@ -3783,13 +4601,19 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
   return (
     <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
       <p className="text-sm text-gray-500 mb-4">
-        Você marcou {shift.totalTrips} corridas para este turno. Faltam detalhar {remainingTrips}.
+        Você tem {tripsData.length} corrida(s) para detalhar.
       </p>
       
-      {trips.map((trip, i) => (
+      {tripsData.map((trip, i) => (
         <div key={i} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl space-y-4 border border-gray-100 dark:border-gray-700 transition-colors">
-          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Corrida #{existingTripsCount + i + 1}</p>
+          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Corrida #{detailedTripsCount + i + 1}</p>
           <div className="grid grid-cols-1 gap-4">
+            <Input 
+              label="Hora de Início" 
+              type="datetime-local" 
+              value={trip.startTime} 
+              onChange={e => updateTrip(i, 'startTime', e.target.value)} 
+            />
             <Input 
               label="Valor (R$)" 
               type="number" 
@@ -3831,10 +4655,12 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
         onClick={async () => {
           setIsSubmitting(true);
           try {
-            await onSubmit(trips.map(t => ({ 
+            await onSubmit(tripsData.map(t => ({ 
+              id: t.id,
               value: Number(t.value), 
-              durationSeconds: (Number(t.durationMin) * 60) + Number(t.durationSec),
-              distanceKm: Number(t.distance)
+              durationSeconds: (Number(t.durationMin || 0) * 60) + Number(t.durationSec || 0),
+              distanceKm: Number(t.distance),
+              startTime: t.startTime ? new Date(t.startTime) : undefined
             })));
           } finally {
             setIsSubmitting(false);
@@ -3842,7 +4668,109 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
         }} 
         className="w-full py-4 sticky bottom-0 shadow-lg"
       >
-        {isSubmitting ? 'Salvando...' : `Salvar ${remainingTrips} Corridas`}
+        {isSubmitting ? 'Salvando...' : `Salvar Corridas`}
+      </Button>
+    </div>
+  );
+}
+
+function FixedExpenseForm({ onSubmit, initialData, onDelete }: { 
+  onSubmit: (name: string, amount: number, dueDay: number) => void,
+  initialData?: FixedExpense,
+  onDelete?: () => void
+}) {
+  const [name, setName] = useState(initialData?.name || '');
+  const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
+  const [dueDay, setDueDay] = useState(initialData?.dueDay?.toString() || '10');
+  const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+
+  return (
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+      <Input label="Nome da Conta (Ex: Prestação Carro)" type="text" value={name} onChange={e => setName(e.target.value)} />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <CurrencyInput label="Valor Mensal (R$)" value={amount} onValueChange={setAmount} />
+        <Input label="Dia de Vencimento" type="number" min="1" max="31" value={dueDay} onChange={e => setDueDay(e.target.value)} />
+      </div>
+      
+      <div className="space-y-3">
+        {!showConfirmDelete ? (
+          <>
+            <Button onClick={() => onSubmit(name, Number(amount), Number(dueDay))} disabled={!name || !amount || !dueDay} className="w-full py-4">
+              {initialData ? 'Atualizar Conta Fixa' : 'Salvar Conta Fixa'}
+            </Button>
+            {onDelete && (
+              <Button onClick={() => setShowConfirmDelete(true)} variant="ghost" className="w-full text-red-500 hover:bg-red-50">Excluir Conta</Button>
+            )}
+          </>
+        ) : (
+          <div className="bg-red-50 p-4 rounded-2xl space-y-4 border border-red-100">
+            <p className="text-sm text-red-700 font-medium text-center">Excluir esta conta fixa permanentemente?</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Button variant="outline" onClick={() => setShowConfirmDelete(false)} className="w-full">Cancelar</Button>
+              <Button onClick={onDelete} variant="danger" className="w-full">Sim, Excluir</Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WithdrawalForm({ onSubmit, platformBalance }: { 
+  onSubmit: (amount: number, date: Date, fee: number) => void,
+  platformBalance: number
+}) {
+  const [amount, setAmount] = useState(platformBalance > 0 ? platformBalance.toString() : '');
+  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [fee, setFee] = useState('0');
+  const [hasFee, setHasFee] = useState(false);
+
+  return (
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-4">
+        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Saldo Disponível na Plataforma</p>
+        <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">R$ {platformBalance.toFixed(2)}</p>
+      </div>
+
+      <CurrencyInput label="Valor do Saque/Transferência (R$)" value={amount} onValueChange={setAmount} />
+      <Input label="Data e Hora do Saque" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} />
+      
+      <div className="space-y-3">
+        <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Houve taxa de saque?</label>
+        <div className="grid grid-cols-2 gap-3">
+          <Button variant={!hasFee ? 'primary' : 'outline'} onClick={() => { setHasFee(false); setFee('0'); }}>Não</Button>
+          <Button variant={hasFee ? 'primary' : 'outline'} onClick={() => setHasFee(true)}>Sim</Button>
+        </div>
+      </div>
+
+      {hasFee && (
+         <CurrencyInput label="Valor da Taxa (R$)" value={fee} onValueChange={setFee} placeholder="Ex: 4.50" />
+      )}
+      
+      <Button disabled={!amount || Number(amount) <= 0} onClick={() => onSubmit(Number(amount), new Date(date), Number(fee))} className="w-full py-4">
+        Confirmar Saque
+      </Button>
+    </div>
+  );
+}
+
+function UpdateBalanceForm({ onSubmit, currentBalance }: { 
+  onSubmit: (newBalance: number) => void,
+  currentBalance: number
+}) {
+  const [balance, setBalance] = useState(currentBalance.toString());
+
+  return (
+    <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
+      <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl mb-4 border border-gray-100 dark:border-gray-700">
+        <p className="text-sm text-gray-500 font-medium">Saldo Atual Registrado</p>
+        <p className="text-2xl font-bold text-gray-900 dark:text-white">R$ {currentBalance.toFixed(2)}</p>
+      </div>
+
+      <CurrencyInput label="Novo Saldo da Plataforma (R$)" value={balance} onValueChange={setBalance} />
+      
+      <Button disabled={balance === ''} onClick={() => onSubmit(Number(balance))} className="w-full py-4">
+        Atualizar Saldo Manulamente
       </Button>
     </div>
   );
@@ -3851,6 +4779,7 @@ function TripBatchForm({ shift, existingTripsCount, onSubmit }: {
 function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings, onSubmit: (data: Partial<UserSettings>) => void, onBackup: () => void }) {
   const [maintPerc, setMaintPerc] = useState((settings.maintenancePercentage ?? 10).toString());
   const [goal, setGoal] = useState(settings.dailyRevenueGoal.toString());
+  const [monthlyNet, setMonthlyNet] = useState((settings.monthlyNetGoal || 2000).toString());
   const [fuel, setFuel] = useState(settings.defaultFuelPrice.toString());
   const [cons, setCons] = useState(settings.avgConsumption.toString());
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey || '');
@@ -3868,6 +4797,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Geral</h3>
         <Input label="Custo de Manutenção (% do Faturamento)" type="number" step="1" value={maintPerc} onChange={e => setMaintPerc(e.target.value)} placeholder="Ex: 10" />
         <Input label="Meta de Faturamento Diário (R$)" type="number" value={goal} onChange={e => setGoal(e.target.value)} placeholder="Ex: 250" />
+        <Input label="Meta Mensal Líquida Desejada (R$)" type="number" value={monthlyNet} onChange={e => setMonthlyNet(e.target.value)} placeholder="Ex: 2000" />
         <Input label="Preço Médio do Combustível (R$)" type="number" step="0.01" value={fuel} onChange={e => setFuel(e.target.value)} placeholder="Ex: 5.50" />
         <Input label="Consumo Médio do Carro (KM/L)" type="number" step="0.1" value={cons} onChange={e => setCons(e.target.value)} placeholder="Ex: 12.0" />
       </Card>
@@ -3912,6 +4842,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         onClick={() => onSubmit({
           maintenancePercentage: Number(maintPerc),
           dailyRevenueGoal: Number(goal),
+          monthlyNetGoal: Number(monthlyNet),
           defaultFuelPrice: Number(fuel),
           avgConsumption: Number(cons),
           geminiApiKey: geminiKey,

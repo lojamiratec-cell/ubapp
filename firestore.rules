@@ -119,7 +119,7 @@ service cloud.firestore {
     function isValidExpense(data) {
       return data.userId is string && data.userId.size() < 100 &&
              data.date is timestamp &&
-             data.category in ['Manutenção', 'Pneus', 'Óleo', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Outros'] &&
+             data.category in ['Manutenção', 'Pneus', 'Óleo', 'Limpeza', 'Alimentação', 'Seguro', 'IPVA/Licenciamento', 'Multas', 'Estacionamento', 'Pedágio', 'Internet/Celular', 'Taxa Bancária/Saque', 'Outros'] &&
              data.value is number &&
              data.kmAtExpense is number;
     }
@@ -133,13 +133,28 @@ service cloud.firestore {
              data.liters is number;
     }
 
+    function isValidFixedExpense(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.name is string && data.name.size() > 0 &&
+             data.amount is number &&
+             data.dueDay is number &&
+             data.active is bool;
+    }
+
+    function isValidWithdrawal(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.date is timestamp &&
+             data.amount is number &&
+             data.fee is number;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
 
     match /settings/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'maintenancePercentage', 'dailyRevenueGoal', 'defaultFuelPrice', 'avgConsumption', 'geminiApiKey', 'oilChangeInterval', 'lastOilChangeKm', 'tireRotationInterval', 'lastTireRotationKm', 'timingBeltInterval', 'lastTimingBeltKm']);
+      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'maintenancePercentage', 'dailyRevenueGoal', 'monthlyNetGoal', 'platformBalance', 'defaultFuelPrice', 'avgConsumption', 'geminiApiKey', 'oilChangeInterval', 'lastOilChangeKm', 'tireRotationInterval', 'lastTireRotationKm', 'timingBeltInterval', 'lastTimingBeltKm']);
     }
 
     match /users/{userId} {
@@ -168,6 +183,18 @@ service cloud.firestore {
       allow read, delete: if isDocOwner();
       allow update: if isDocOwner() && uidNotModified() && isValidFuel(request.resource.data);
       allow create: if isAuthenticated() && uidUnchanged() && isValidFuel(request.resource.data);
+    }
+
+    match /fixed_expenses/{fixedExpenseId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidFixedExpense(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidFixedExpense(request.resource.data);
+    }
+
+    match /withdrawals/{withdrawalId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidWithdrawal(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidWithdrawal(request.resource.data);
     }
   }
 }

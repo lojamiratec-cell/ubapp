@@ -42,14 +42,15 @@ export interface Trip {
   value: number;
   durationSeconds: number;
   distanceKm: number;
-  timestamp: Timestamp;
+  timestamp: Timestamp; // Creation time
+  startTime?: Timestamp; // The time the trip actually started
 }
 
 export interface Expense {
   id: string;
   userId: string;
   date: Timestamp;
-  category: 'Manutenção' | 'Pneus' | 'Óleo' | 'Limpeza' | 'Alimentação' | 'Seguro' | 'IPVA/Licenciamento' | 'Multas' | 'Estacionamento' | 'Pedágio' | 'Internet/Celular' | 'Outros';
+  category: 'Manutenção' | 'Pneus' | 'Óleo' | 'Limpeza' | 'Alimentação' | 'Seguro' | 'IPVA/Licenciamento' | 'Multas' | 'Estacionamento' | 'Pedágio' | 'Internet/Celular' | 'Taxa Bancária/Saque' | 'Outros';
   value: number;
   kmAtExpense: number;
   paymentMethod?: 'Pix' | 'Crédito';
@@ -72,8 +73,10 @@ export interface Fuel {
 export interface UserSettings {
   userId: string;
   maintenanceCostPerKm: number;
-  maintenancePercentage?: number;
-  dailyRevenueGoal: number;
+  maintenancePercentage?: number; // % estimated for maintenance
+  dailyRevenueGoal: number; // Used loosely before, can be kept
+  monthlyNetGoal?: number; // Meta Líquida de Ganhos para o mês
+  platformBalance?: number; // Saldo de Faturamento ainda na plataforma (Uber, 99)
   defaultFuelPrice: number;
   avgConsumption: number;
   geminiApiKey?: string;
@@ -84,6 +87,23 @@ export interface UserSettings {
   lastTireRotationKm: number;
   timingBeltInterval: number;
   lastTimingBeltKm: number;
+}
+
+export interface FixedExpense {
+  id: string;
+  userId: string;
+  name: string;
+  amount: number;
+  dueDay: number; // 1-31
+  active: boolean; // Ativo no cálculo de metas
+}
+
+export interface Withdrawal {
+  id: string;
+  userId: string;
+  date: Timestamp;
+  amount: number;
+  fee: number;
 }
 
 export interface UserProfile {

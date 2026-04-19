@@ -32,3 +32,12 @@
 body {
   @apply transition-colors duration-300;
 }
+
+@keyframes pulse-red {
+  0%, 100% { background-color: rgba(239, 68, 68, 0.1); border-color: rgba(239, 68, 68, 0.2); }
+  50% { background-color: rgba(239, 68, 68, 0.6); border-color: rgba(239, 68, 68, 1); color: white; transform: scale(1.02); }
+}
+
+.animate-pulse-red {
+  animation: pulse-red 1.5s infinite;
+}

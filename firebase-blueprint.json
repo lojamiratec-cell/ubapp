@@ -77,6 +77,31 @@
       },
       "required": ["userId", "date", "km", "pricePerLiter", "totalValue"]
     },
+    "FixedExpense": {
+      "title": "FixedExpense",
+      "description": "Recurring fixed expense for a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "dueDay": { "type": "number" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["userId", "name", "amount", "dueDay", "active"]
+    },
+    "Withdrawal": {
+      "title": "Withdrawal",
+      "description": "A financial withdrawal/transfer record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "amount": { "type": "number" },
+        "fee": { "type": "number" }
+      },
+      "required": ["userId", "date", "amount", "fee"]
+    },
     "UserSettings": {
       "title": "UserSettings",
       "description": "User specific settings for calculations",
@@ -86,6 +111,8 @@
         "maintenanceCostPerKm": { "type": "number" },
         "maintenancePercentage": { "type": "number" },
         "dailyRevenueGoal": { "type": "number" },
+        "monthlyNetGoal": { "type": "number" },
+        "platformBalance": { "type": "number" },
         "defaultFuelPrice": { "type": "number" },
         "avgConsumption": { "type": "number" },
         "oilChangeInterval": { "type": "number" },
@@ -122,6 +149,14 @@
     "/fuel/{fuelId}": {
       "schema": "Fuel",
       "description": "Fuel refill records"
+    },
+    "/fixed_expenses/{fixedExpenseId}": {
+      "schema": "FixedExpense",
+      "description": "Recurring fixed expenses"
+    },
+    "/withdrawals/{withdrawalId}": {
+      "schema": "Withdrawal",
+      "description": "Financial withdrawals and transfers"
     }
   }
 }
