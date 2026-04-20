@@ -76,6 +76,7 @@ export interface UserSettings {
   maintenancePercentage?: number; // % estimated for maintenance
   dailyRevenueGoal: number; // Used loosely before, can be kept
   monthlyNetGoal?: number; // Meta Líquida de Ganhos para o mês
+  workDays?: number[]; // Dias de trabalho na semana (0=Dom, 1=Seg, ...)
   platformBalance?: number; // Saldo de Faturamento ainda na plataforma (Uber, 99)
   defaultFuelPrice: number;
   avgConsumption: number;
@@ -96,6 +97,7 @@ export interface FixedExpense {
   amount: number;
   dueDay: number; // 1-31
   active: boolean; // Ativo no cálculo de metas
+  lastPaidMonth?: string; // Mês/Ano em que foi pago pela última vez 'YYYY-MM'
 }
 
 export interface Withdrawal {

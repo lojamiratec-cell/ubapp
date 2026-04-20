@@ -138,7 +138,8 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 &&
              data.amount is number &&
              data.dueDay is number &&
-             data.active is bool;
+             data.active is bool &&
+             (!('lastPaidMonth' in data) || data.lastPaidMonth is string);
     }
 
     function isValidWithdrawal(data) {
@@ -154,7 +155,7 @@ service cloud.firestore {
 
     match /settings/{userId} {
       allow read: if isOwner(userId);
-      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'maintenancePercentage', 'dailyRevenueGoal', 'monthlyNetGoal', 'platformBalance', 'defaultFuelPrice', 'avgConsumption', 'geminiApiKey', 'oilChangeInterval', 'lastOilChangeKm', 'tireRotationInterval', 'lastTireRotationKm', 'timingBeltInterval', 'lastTimingBeltKm']);
+      allow write: if isOwner(userId) && hasOnlyAllowedFields(['userId', 'maintenanceCostPerKm', 'maintenancePercentage', 'dailyRevenueGoal', 'monthlyNetGoal', 'workDays', 'platformBalance', 'defaultFuelPrice', 'avgConsumption', 'geminiApiKey', 'oilChangeInterval', 'lastOilChangeKm', 'tireRotationInterval', 'lastTireRotationKm', 'timingBeltInterval', 'lastTimingBeltKm']);
     }
 
     match /users/{userId} {

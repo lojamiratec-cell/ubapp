@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { NumericFormat } from 'react-number-format';
 import { 
   Play, Pause, Square, History, DollarSign, BarChart3, 
-  Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
+  Plus, ChevronRight, ChevronLeft, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon, Target, Activity,
   Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X,
   Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon, Navigation
@@ -24,7 +24,7 @@ import {
 import { 
   collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch
 } from 'firebase/firestore';
-import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell 
@@ -166,6 +166,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'wallet' | 'insights' | 'settings'>('operation');
   const [historyFilter, setHistoryFilter] = useState<'week' | 'month' | 'all'>('week');
+  const [historyReferenceDate, setHistoryReferenceDate] = useState(new Date());
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -245,13 +246,12 @@ export default function App() {
 
   const groupedShifts = useMemo(() => {
     const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number, totalWorkKm: number }> = {};
-    const now = new Date();
     
     let filteredShifts = shifts;
     if (historyFilter === 'week') {
-      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), now, { weekStartsOn: 1 }));
+      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), historyReferenceDate, { weekStartsOn: 1 }));
     } else if (historyFilter === 'month') {
-      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), now));
+      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), historyReferenceDate));
     }
 
     filteredShifts.forEach(shift => {
@@ -266,7 +266,33 @@ export default function App() {
       groups[dateKey].totalWorkKm += (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm));
     });
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [shifts, historyFilter]);
+  }, [shifts, historyFilter, historyReferenceDate]);
+
+  const historyRangeLabel = useMemo(() => {
+    if (historyFilter === 'all') return { type: 'Todo o Período', label: 'Todos os Turnos' };
+    if (historyFilter === 'week') {
+      const start = startOfWeek(historyReferenceDate, { weekStartsOn: 1 });
+      const end = endOfWeek(historyReferenceDate, { weekStartsOn: 1 });
+      return { 
+        type: 'Semana', 
+        label: `${format(start, 'dd/MM')} - ${format(end, 'dd/MM')}`
+      };
+    }
+    return {
+      type: 'Mês',
+      label: format(historyReferenceDate, 'MMMM yyyy', { locale: ptBR })
+    };
+  }, [historyFilter, historyReferenceDate]);
+
+  const prevHistoryRange = () => {
+    if (historyFilter === 'week') setHistoryReferenceDate(prev => subWeeks(prev, 1));
+    else if (historyFilter === 'month') setHistoryReferenceDate(prev => subMonths(prev, 1));
+  };
+  
+  const nextHistoryRange = () => {
+    if (historyFilter === 'week') setHistoryReferenceDate(prev => addWeeks(prev, 1));
+    else if (historyFilter === 'month') setHistoryReferenceDate(prev => addMonths(prev, 1));
+  };
 
   const historySummary = useMemo(() => {
     const totalRevenue = groupedShifts.reduce((acc, g) => acc + g.totalRevenue, 0);
@@ -1293,6 +1319,31 @@ REGRAS CRÍTICAS:
     }
   };
 
+  const payFixedExpense = async (fe: FixedExpense) => {
+    if (!user || !settings) return;
+    try {
+      const currentMonthStr = format(new Date(), 'yyyy-MM');
+      const batch = writeBatch(db);
+      
+      const feRef = doc(db, 'fixed_expenses', fe.id);
+      batch.update(feRef, { lastPaidMonth: currentMonthStr });
+      
+      const settingsRef = doc(db, 'settings', user.uid);
+      batch.update(settingsRef, {
+        platformBalance: (settings.platformBalance || 0) - fe.amount
+      });
+      
+      await batch.commit();
+      setSettings(prev => prev ? { ...prev, platformBalance: (prev.platformBalance || 0) - fe.amount } : null);
+      
+      // Update local state directly to be responsive
+      setFixedExpenses(prev => prev.map(item => item.id === fe.id ? { ...item, lastPaidMonth: currentMonthStr } : item));
+      
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `fixed_expenses/${fe.id}`);
+    }
+  };
+
   const addWithdrawal = async (amount: number, date: Date, fee: number) => {
     if (!user || !settings) return;
     try {
@@ -2131,7 +2182,24 @@ REGRAS CRÍTICAS:
     const sortedTodayShifts = [...allTodayShifts].sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
     const startKm = sortedTodayShifts.length > 0 ? sortedTodayShifts[0].startKm : 0;
 
-    return { totalRevenue, totalTime, totalTrips, startKm, shiftCount: allTodayShifts.length };
+    const maxKm = allTodayShifts.length > 0 
+      ? Math.max(...allTodayShifts.map(s => s.lastKm || s.endKm || s.startKm || 0)) 
+      : 0;
+
+    const totalKmDriven = allTodayShifts.reduce((acc, s) => {
+      const workKm = s.totalWorkKm || (s.endKm ? s.endKm - s.startKm : (s.lastKm ? s.lastKm - s.startKm : 0));
+      return acc + (Number(workKm) || 0);
+    }, 0);
+
+    return { 
+      totalRevenue, 
+      totalTime, 
+      totalTrips, 
+      startKm, 
+      maxKm,
+      totalKmDriven,
+      shiftCount: allTodayShifts.length 
+    };
   }, [shifts, activeShift, elapsedTime]);
 
   const costsMetrics = useMemo(() => {
@@ -2177,9 +2245,6 @@ REGRAS CRÍTICAS:
     const now = new Date();
     const startOfM = startOfMonth(now);
     const endOfM = endOfMonth(now);
-    const daysInMonth = differenceInDays(endOfM, startOfM) + 1;
-    const daysElapsed = differenceInDays(now, startOfM) + 1;
-    const daysRemaining = Math.max(1, daysInMonth - daysElapsed + 1);
 
     const thisMonthShifts = shifts.filter(s => {
       const d = ensureDate(s.startTime);
@@ -2189,8 +2254,21 @@ REGRAS CRÍTICAS:
     const revenueSoFar = thisMonthShifts.reduce((acc, s) => acc + s.totalRevenue, 0) + (activeShift?.totalRevenue || 0);
 
     const totalFixed = fixedExpenses.reduce((acc, fe) => acc + (fe.active ? fe.amount : 0), 0);
+    
+    // Calculate extra expenses for this month to discount from net correctly
+    const thisMonthExpenses = expenses.filter(e => isWithinInterval(ensureDate(e.date), { start: startOfM, end: endOfM }));
+    const totalExtraExpenses = thisMonthExpenses.reduce((acc, e) => acc + (Number(e.value) || 0), 0);
+    
     const monthlyNetGoal = settings.monthlyNetGoal || 2000;
-    const maintenancePercentage = settings.maintenancePercentage || 10;
+    const workDays = settings.workDays || [1, 2, 3, 4, 5, 6]; // default mon-sat
+    
+    // Logic for remaining workdays based on selected days in array
+    let daysRemaining = 0;
+    for (let d = new Date(startOfDay(now)); d <= endOfM; d.setDate(d.getDate() + 1)) {
+       if (workDays.includes(d.getDay())) daysRemaining++;
+    }
+    // Prevent division by zero
+    daysRemaining = Math.max(1, daysRemaining);
     
     // Performance Projections (Last 30 days)
     const thirtyDaysAgo = subDays(now, 30);
@@ -2198,44 +2276,39 @@ REGRAS CRÍTICAS:
     
     const totalRev30 = last30Shifts.reduce((acc, s) => acc + s.totalRevenue, 0);
     const totalHrs30 = last30Shifts.reduce((acc, s) => acc + (s.activeTimeSeconds / 3600), 0);
-    const totalKm30 = last30Shifts.reduce((acc, s) => acc + (s.totalWorkKm || (s.endKm - s.startKm)), 0);
+    const totalKm30 = last30Shifts.reduce((acc, s) => acc + (s.totalWorkKm || (s.endKm ? s.endKm - s.startKm : 0) || 0), 0);
 
-    const avgRph = totalHrs30 > 0 ? totalRev30 / totalHrs30 : 40; // fallback to 40 R$/h
-    const avgRpkm = totalKm30 > 0 ? totalRev30 / totalKm30 : 2.5; // fallback to 2.5 R$/km
+    const avgRph = totalHrs30 > 0 ? totalRev30 / totalHrs30 : 40; 
+    const avgRpkm = totalKm30 > 0 ? totalRev30 / totalKm30 : 2.5;
 
     // Fuel Estimation
     const last30Fuel = fuelRecords.filter(f => ensureDate(f.date) >= thirtyDaysAgo);
-    const fuelCostPerKm = last30Fuel.length > 0 
-      ? last30Fuel.reduce((acc, f) => acc + f.totalValue, 0) / (fuelRecords.reduce((acc, f, i) => i > 0 && ensureDate(f.date) >= thirtyDaysAgo ? acc + (f.km - fuelRecords[i-1].km) : acc, 0) || 1)
-      : (settings.defaultFuelPrice / (settings.avgConsumption || 12));
-
-    // Variable Costs = Fuel + Maintenance Reserve (Percentage of Revenue)
-    // Formula for required Revenue (R):
-    // R - (R * FuelCost/avgRpkm) - (R * Maint%/100) - FixedCostsStage = NetGoal
-    // R * (1 - (FuelCost/avgRpkm) - (Maint%/100)) = NetGoal + FixedCosts
-    // We simplify: Variable costs are roughly Maint% + (FuelCost / avgRpkm)
-    const varCostRatio = (maintenancePercentage / 100) + (fuelCostPerKm / avgRpkm);
+    const totalFuel30 = last30Fuel.reduce((acc, f) => acc + (Number(f.totalValue) || 0), 0);
     
-    // Safety check for ratio
-    const adjRatio = Math.max(0.1, 1 - varCostRatio);
+    const rawFuelRatio = totalRev30 > 0 ? (totalFuel30 / totalRev30) : 0.25;
+    const safeFuelRatio = Math.min(0.5, Math.max(0.05, rawFuelRatio)); // keeps it between 5% and 50%
     
-    const revenueNeededTotal = (monthlyNetGoal + totalFixed) / adjRatio;
+    // Margin calculation
+    const marginRatio = 1 - safeFuelRatio;
+    
+    // Gross Goal = (Net + Fixed + Extra Expense) / Margem
+    const revenueNeededTotal = (monthlyNetGoal + totalFixed + totalExtraExpenses) / marginRatio;
     const revenueRemaining = Math.max(0, revenueNeededTotal - revenueSoFar);
+    
     const dailyNeeded = revenueRemaining / daysRemaining;
 
     // Projections
     const hoursPerDay = dailyNeeded / avgRph;
     const kmPerDay = dailyNeeded / avgRpkm;
     
-    // Total remaining hours to hit goal
     const totalHoursRemaining = revenueRemaining / avgRph;
-    const fuelCostPerKmEffective = fuelCostPerKm || (settings.defaultFuelPrice / (settings.avgConsumption || 12));
-    const estimatedFuelCostRemaining = (revenueRemaining / avgRpkm) * fuelCostPerKmEffective;
+    const estimatedFuelCostRemaining = revenueRemaining * safeFuelRatio;
 
     const progressPerc = Math.min(100, (revenueSoFar / revenueNeededTotal) * 100);
 
     return {
       totalFixed,
+      totalExtraExpenses,
       monthlyNetGoal,
       revenueNeededTotal,
       revenueSoFar,
@@ -2248,9 +2321,11 @@ REGRAS CRÍTICAS:
       avgRph,
       avgRpkm,
       totalHoursRemaining,
-      estimatedFuelCostRemaining
+      estimatedFuelCostRemaining,
+      safeFuelRatio,
+      workDays
     };
-  }, [fixedExpenses, settings, fuelRecords, shifts, activeShift]);
+  }, [fixedExpenses, settings, fuelRecords, shifts, activeShift, expenses]);
 
   const goalsProjection = useMemo(() => {
     if (!settings) return null;
@@ -2612,11 +2687,11 @@ REGRAS CRÍTICAS:
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">KM Atual do Turno</p>
-                    <p className="text-lg font-bold dark:text-white">{activeShift ? activeShift.lastKm : '--'} km</p>
+                    <p className="text-lg font-bold dark:text-white">{todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km</p>
                   </div>
                   <div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">R$ / KM Parcial</p>
-                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {activeShift && activeShift.lastKm > activeShift.startKm ? (activeShift.totalRevenue / (activeShift.lastKm - activeShift.startKm)).toFixed(2) : '0.00'}</p>
+                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalKmDriven > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalKmDriven).toFixed(2) : '0.00'}</p>
                   </div>
                 </div>
               </Card>
@@ -2720,10 +2795,33 @@ REGRAS CRÍTICAS:
                   </div>
                 </div>
                 
-                <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
-                  <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'week' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Semana</button>
-                  <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
-                  <button onClick={() => setHistoryFilter('all')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'all' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Tudo</button>
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
+                  <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
+                    <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'week' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Semana</button>
+                    <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
+                    <button onClick={() => setHistoryFilter('all')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'all' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Tudo</button>
+                  </div>
+
+                  {historyFilter !== 'all' && (
+                    <div className="flex items-center justify-between sm:justify-start gap-4 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+                      <button 
+                        onClick={prevHistoryRange}
+                        className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      <div className="text-center min-w-[120px]">
+                        <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest leading-none mb-0.5">{historyRangeLabel.type}</p>
+                        <p className="text-xs font-bold dark:text-white capitalize">{historyRangeLabel.label}</p>
+                      </div>
+                      <button 
+                        onClick={nextHistoryRange}
+                        className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
+                      >
+                        <ChevronRight size={18} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {shifts.length > 0 && (
@@ -2796,31 +2894,50 @@ REGRAS CRÍTICAS:
                                 <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
                                   <div className="flex justify-between items-center sm:items-start">
                                     <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-2">
-                                        <div className="bg-blue-100 dark:bg-blue-900/30 p-1.5 rounded-lg flex items-center justify-center shrink-0">
-                                          <Car size={16} className="text-blue-600 dark:text-blue-400" />
+                                      <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                          <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg flex items-center justify-center shrink-0">
+                                            <Car size={18} className="text-blue-600 dark:text-blue-400" />
+                                          </div>
+                                          <p className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none">
+                                            Turno {group.shifts.length - index}
+                                          </p>
                                         </div>
-                                        <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none">
-                                          Turno {group.shifts.length - index}
+                                        <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
+                                          <Clock size={12} className="inline mr-1 opacity-70 mb-0.5" />
+                                          {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
                                         </p>
                                       </div>
-                                      <div className="flex flex-col sm:flex-row sm:items-end gap-1 sm:gap-4">
-                                        <div className="flex items-baseline gap-1">
-                                          <span className="text-lg sm:text-xl font-black text-gray-900 dark:text-white leading-tight">
-                                            R$ {shift.totalRevenue.toFixed(2)}
-                                          </span>
+                                      
+                                      <div className="flex items-baseline gap-1 mb-3">
+                                        <span className="text-2xl font-black text-gray-900 dark:text-white leading-tight">
+                                          R$ {shift.totalRevenue.toFixed(2)}
+                                        </span>
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
+                                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg border border-gray-200/50 dark:border-gray-700/50">
+                                          <Clock size={14} className="opacity-70 text-gray-400" />
+                                          {formatTime(shift.activeTimeSeconds)}
                                         </div>
-                                        <div className="flex items-center gap-3">
-                                          <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
-                                            <Clock size={12} className="opacity-70" />
-                                            {formatTime(shift.activeTimeSeconds)}
+                                        {shift.totalTrips > 0 && (
+                                          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-lg border border-blue-100/50 dark:border-blue-800/30">
+                                            <Users size={14} className="opacity-70 text-blue-500" />
+                                            {shift.totalTrips} Corridas
                                           </div>
-                                          {shift.totalTrips > 0 && (
-                                            <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400 text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2 py-0.5 rounded-full">
-                                              <Users size={12} className="opacity-70" />
-                                              {shift.totalTrips}
-                                            </div>
-                                          )}
+                                        )}
+                                        <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 text-xs font-bold bg-indigo-50 dark:bg-indigo-900/20 px-2.5 py-1.5 rounded-lg border border-indigo-100/50 dark:border-indigo-800/30">
+                                          <MapPin size={14} className="opacity-70 text-indigo-500" />
+                                          {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
+                                        </div>
+                                      </div>
+                                      
+                                      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/80">
+                                        <div className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                          <span className="text-blue-600 dark:text-blue-400">{shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}</span>/km
+                                        </div>
+                                        <div className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                          <span className="text-green-600 dark:text-green-400">{shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}</span>/h
                                         </div>
                                       </div>
                                     </div>
@@ -2895,9 +3012,19 @@ REGRAS CRÍTICAS:
                                             </div>
                                           </div>
 
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Consumo Médio</p>
-                                            <p className="text-sm font-bold dark:text-white">{shift.avgConsumption?.toFixed(1) || '0.0'} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
+                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors flex flex-col justify-between">
+                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Carro / Consumo</p>
+                                            <p className="text-sm font-bold dark:text-white mb-2">{shift.avgConsumption?.toFixed(1) || '0.0'} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
+                                            <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg space-y-1 text-xs">
+                                              <div className="flex justify-between items-center text-gray-500 dark:text-gray-400">
+                                                <span>Gasto est.:</span>
+                                                <span className="font-bold">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)}L</span>
+                                              </div>
+                                              <div className="flex justify-between items-center text-red-500 dark:text-red-400">
+                                                <span>Custo est.:</span>
+                                                <span className="font-bold">-R$ {(((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)) * (settings?.defaultFuelPrice || 0)).toFixed(2)}</span>
+                                              </div>
+                                            </div>
                                           </div>
                                         </div>
 
@@ -2919,21 +3046,37 @@ REGRAS CRÍTICAS:
                                               const mins = Math.floor(trip.durationSeconds / 60);
                                               const secs = trip.durationSeconds % 60;
                                               const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
+                                              const tripRph = trip.value / (trip.durationSeconds / 3600);
+                                              
+                                              let dotColor = "bg-red-600"; // <30
+                                              if (tripRph > 40) {
+                                                dotColor = "bg-green-500";
+                                              } else if (tripRph > 35) {
+                                                dotColor = "bg-yellow-500";
+                                              } else if (tripRph >= 30) {
+                                                dotColor = "bg-orange-500";
+                                              }
+
                                               return (
                                                 <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 px-3 py-2.5 rounded-xl text-sm border border-gray-100 dark:border-gray-800 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-all hover:border-blue-100 dark:hover:border-blue-900 group/trip">
-                                                  <div className="flex items-center gap-3">
-                                                    <div className="flex flex-col items-center">
-                                                      <div className="w-2 h-2 rounded-full bg-blue-500 mb-1" />
-                                                      {tripHour && <span className="text-[10px] font-bold text-gray-400 dark:text-gray-500 tabular-nums">{tripHour}</span>}
+                                                  <div className="flex items-center gap-1 sm:gap-3 w-full">
+                                                    <div className="flex flex-col items-center min-w-[32px]">
+                                                      <div className={cn("w-2.5 h-2.5 rounded-full mb-1", dotColor)} title={`R$ ${tripRph.toFixed(0)}/h`} />
                                                     </div>
-                                                    <div className="flex flex-col">
-                                                      <span className="font-bold dark:text-white leading-tight">R$ {trip.value.toFixed(2)}</span>
-                                                      <span className="text-[10px] text-gray-400 dark:text-gray-500 font-medium leading-tight">
-                                                        {mins > 0 ? `${mins}m ` : ''}{secs}s {trip.distanceKm ? `• ${trip.distanceKm.toFixed(1)}km` : ''}
-                                                      </span>
+                                                    <div className="flex items-center justify-between gap-1 w-full flex-wrap sm:flex-nowrap">
+                                                       {tripHour && <span className="text-xs font-bold text-gray-500 dark:text-gray-400 tabular-nums w-10 shrink-0">{tripHour}</span>}
+                                                       <span className="font-black text-gray-900 dark:text-white text-sm shrink-0 min-w-[60px]">R$ {trip.value.toFixed(2)}</span>
+                                                       <div className="hidden sm:flex h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1"></div>
+                                                       <span className="text-xs text-gray-500 dark:text-gray-400 font-bold shrink-0 tabular-nums">
+                                                         {mins > 0 ? `${mins}m ` : ''}{secs}s
+                                                       </span>
+                                                       <div className="hidden sm:flex h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1"></div>
+                                                       <span className="text-xs text-indigo-500 dark:text-indigo-400 font-bold shrink-0 tabular-nums">
+                                                         {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
+                                                       </span>
                                                     </div>
                                                   </div>
-                                                  <div className="flex gap-1 opacity-0 group-hover/trip:opacity-100 transition-opacity">
+                                                  <div className="flex gap-1 opacity-0 group-hover/trip:opacity-100 transition-opacity ml-2 shrink-0">
                                                     <button 
                                                       className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
                                                       onClick={(e) => {
@@ -3036,11 +3179,11 @@ REGRAS CRÍTICAS:
                     </div>
                     
                     <div className="relative z-10">
-                      <div className="flex justify-between items-center mb-6">
+                      <div className="flex justify-between items-start mb-6">
                         <div>
                           <h3 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">Resumo do Mês</h3>
                           <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100 italic">
-                            Faltam {planningMetrics.daysRemaining} dias
+                            Faltam {planningMetrics.daysRemaining} dias úteis
                           </p>
                         </div>
                         <button 
@@ -3052,11 +3195,19 @@ REGRAS CRÍTICAS:
                         </button>
                       </div>
 
+                      <div className="p-4 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-600/30 mb-6">
+                        <p className="text-[10px] text-white/70 font-bold uppercase mb-1">Faturamento Bruto Necessário</p>
+                        <div className="flex items-baseline gap-2">
+                           <p className="text-3xl font-black leading-tight">R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</p>
+                        </div>
+                        <p className="text-xs mt-2 text-indigo-100">Falta faturar <span className="font-bold text-white">R$ {planningMetrics.revenueRemaining.toFixed(2)}</span> p/ fechar.</p>
+                      </div>
+
                       {/* Progress Bar */}
                       <div className="mb-6 space-y-2">
                         <div className="flex justify-between text-[11px] font-black text-indigo-900/60 dark:text-indigo-100/60 uppercase tracking-tighter">
                           <span>R$ {planningMetrics.revenueSoFar.toFixed(0)} feitos</span>
-                          <span>Alvo: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
+                          <span>{planningMetrics.progressPerc.toFixed(1)}%</span>
                         </div>
                         <div className="h-4 bg-indigo-200/40 dark:bg-indigo-950/50 rounded-full overflow-hidden border border-indigo-200/30 p-0.5">
                           <motion.div 
@@ -3065,46 +3216,34 @@ REGRAS CRÍTICAS:
                             className="h-full bg-indigo-600 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.4)]"
                           />
                         </div>
-                        <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 text-center">{planningMetrics.progressPerc.toFixed(1)}% da jornada concluída</p>
                       </div>
 
-                      <div className="space-y-4 mb-6">
-                        <div className="p-4 bg-white/50 dark:bg-black/20 rounded-2xl border border-indigo-50 dark:border-indigo-900/30">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase mb-1">Status de Faturamento</p>
-                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100 leading-tight">
-                            Ainda faltam <span className="text-indigo-600">R$ {planningMetrics.revenueRemaining.toFixed(2)}</span> para bater a meta total.
-                          </p>
+                      <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="p-3 bg-white/60 dark:bg-black/20 rounded-xl border border-indigo-50 dark:border-indigo-900/30 flex flex-col justify-center">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Inteligente</p>
+                          <p className="text-lg font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
                         </div>
-
-                        <div className="p-4 bg-white/50 dark:bg-black/20 rounded-2xl border border-indigo-50 dark:border-indigo-900/30">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase mb-1">Esforço Estimado</p>
-                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100 leading-tight">
-                            Você ainda precisa rodar <span className="text-indigo-600">~{planningMetrics.totalHoursRemaining.toFixed(0)} horas</span> para bater a meta.
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 mb-6">
-                        <div className="flex flex-col">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária</p>
-                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
-                        </div>
-                        <div className="flex flex-col">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Horas/Dia</p>
-                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100">{planningMetrics.hoursPerDay.toFixed(1)}h</p>
+                        <div className="p-3 bg-white/60 dark:bg-black/20 rounded-xl border border-indigo-50 dark:border-indigo-900/30 flex flex-col justify-center">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Total Horas Restantes</p>
+                          <p className="text-lg font-black text-indigo-900 dark:text-indigo-100">~{planningMetrics.totalHoursRemaining.toFixed(0)}h</p>
                         </div>
                       </div>
 
                       <div className="pt-4 border-t border-indigo-100 dark:border-indigo-800/50 space-y-4">
-                        <div className="flex justify-between items-center text-[11px] text-indigo-600/80 dark:text-indigo-400/80 font-medium">
-                           <p title="Quanto você quer que sobre">Lucro: <span className="font-bold">R$ {planningMetrics.monthlyNetGoal}</span></p>
-                           <p title="Total de gastos fixos ativos">Contas: <span className="font-bold">R$ {planningMetrics.totalFixed}</span></p>
-                           <p title="Calculado com base na sua rodagem média">Fuel: <span className="font-bold">~R$ {planningMetrics.estimatedFuelCostRemaining.toFixed(0)}</span></p>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                           <div className="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 p-2 rounded-lg">
+                             <p className="text-[9px] uppercase font-bold opacity-70">Meta de Lucro Líquido</p>
+                             <p className="font-black text-sm">R$ {planningMetrics.monthlyNetGoal}</p>
+                           </div>
+                           <div className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 p-2 rounded-lg">
+                             <p className="text-[9px] uppercase font-bold opacity-70">Est. Despesas/Comb.</p>
+                             <p className="font-black text-sm">R$ {(planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(0)}</p>
+                           </div>
                         </div>
 
                         <div className="flex flex-col sm:flex-row gap-3">
-                          <div className="flex-1 text-[10px] text-indigo-500/70 font-bold uppercase bg-indigo-50/50 dark:bg-indigo-950/30 p-2 rounded-lg text-center">
-                            Média: R$ {planningMetrics.avgRph.toFixed(0)}/h • R$ {planningMetrics.avgRpkm.toFixed(2)}/km
+                          <div className="flex-1 text-[10px] text-indigo-500/70 font-bold uppercase bg-indigo-50/50 dark:bg-indigo-950/30 p-2 rounded-lg text-center flex items-center justify-center">
+                            Sua Média: R$ {planningMetrics.avgRph.toFixed(0)}/h
                           </div>
                           <Button 
                             onClick={generateAIPlanning} 
@@ -3150,33 +3289,46 @@ REGRAS CRÍTICAS:
                         const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, fe.dueDay);
                         daysUntilDue = differenceInDays(nextMonth, now);
                       }
+                      const currentMonthStr = format(new Date(), 'yyyy-MM');
+                      const isPaid = fe.lastPaidMonth === currentMonthStr;
+
                       return (
-                        <Card key={fe.id} className="flex justify-between items-center group relative overflow-hidden">
-                          {daysUntilDue <= 3 && daysUntilDue >= 0 && (
+                        <Card key={fe.id} className={cn("flex flex-col sm:flex-row justify-between items-start sm:items-center group relative overflow-hidden gap-4", isPaid && "opacity-50 grayscale")}>
+                          {daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid && (
                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
                           )}
                           <div className="flex items-center gap-4">
-                            <div className={cn("p-3 rounded-2xl transition-colors", daysUntilDue <= 3 && daysUntilDue >= 0 ? "bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400")}>
+                            <div className={cn("p-3 rounded-2xl transition-colors", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400")}>
                                <CalendarIcon size={20} />
                             </div>
                             <div>
                                <p className="font-bold text-gray-900 dark:text-white leading-tight">{fe.name}</p>
-                               <p className={cn("text-xs font-medium", daysUntilDue <= 3 && daysUntilDue >= 0 ? "text-red-500" : "text-gray-500")}>
-                                 Vence dia {fe.dueDay} (em {daysUntilDue} dias)
+                               <p className={cn("text-xs font-medium", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "text-red-500" : "text-gray-500")}>
+                                 {isPaid ? 'Pago este mês' : `Vence dia ${fe.dueDay} (em ${daysUntilDue} dias)`}
                                </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center justify-between w-full sm:w-auto gap-4">
                             <p className="font-bold text-lg dark:text-white">R$ {fe.amount.toFixed(2)}</p>
-                            <button 
-                              className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
-                              onClick={() => {
-                                setEditingFixedExpense(fe);
-                                setShowFixedExpenseModal(true);
-                              }}
-                            >
-                              <Edit2 size={16} />
-                            </button>
+                            <div className="flex items-center gap-2">
+                              {!isPaid && (
+                                <button
+                                  onClick={() => payFixedExpense(fe)}
+                                  className="px-3 py-1.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-lg text-xs font-bold transition-all hover:bg-green-200 dark:hover:bg-green-900/50"
+                                >
+                                  Pagar
+                                </button>
+                              )}
+                              <button 
+                                className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                                onClick={() => {
+                                  setEditingFixedExpense(fe);
+                                  setShowFixedExpenseModal(true);
+                                }}
+                              >
+                                <Edit2 size={16} />
+                              </button>
+                            </div>
                           </div>
                         </Card>
                       );
@@ -4156,14 +4308,13 @@ REGRAS CRÍTICAS:
         <UpdateBalanceForm onSubmit={updatePlatformBalance} currentBalance={settings?.platformBalance || 0} />
       </Modal>
 
-      <Modal isOpen={showMonthlyGoalModal} onClose={() => setShowMonthlyGoalModal(false)} title="Definir Lucro Desejado">
+      <Modal isOpen={showMonthlyGoalModal} onClose={() => setShowMonthlyGoalModal(false)} title="Definir Meta de Lucro">
         <MonthlyGoalForm 
           currentGoal={settings?.monthlyNetGoal || 2000} 
-          onSubmit={(newGoal) => {
-            updatePlatformBalance(settings?.platformBalance || 0); // reusing setting update logic
-            // Actually I should probably use a generic updateSettings function or just update platform balance update logic to include more
+          currentWorkDays={settings?.workDays || [1, 2, 3, 4, 5, 6]}
+          onSubmit={async (newGoal, newWorkDays) => {
             if (user) {
-               updateDoc(doc(db, 'settings', user.uid), { monthlyNetGoal: newGoal });
+               await updateSettings({ monthlyNetGoal: newGoal, workDays: newWorkDays });
             }
             setShowMonthlyGoalModal(false);
           }} 
@@ -4882,13 +5033,55 @@ function TripBatchForm({ shift, existingTrips, onSubmit }: {
   );
 }
 
-function MonthlyGoalForm({ onSubmit, currentGoal }: { onSubmit: (goal: number) => void, currentGoal: number }) {
+function MonthlyGoalForm({ onSubmit, currentGoal, currentWorkDays }: { onSubmit: (goal: number, workDays: number[]) => void, currentGoal: number, currentWorkDays: number[] }) {
   const [goal, setGoal] = useState(currentGoal.toString());
+  const [workDays, setWorkDays] = useState<number[]>(currentWorkDays);
+
+  const toggleDay = (day: number) => {
+    setWorkDays(prev => 
+      prev.includes(day) 
+        ? prev.filter(d => d !== day) 
+        : [...prev, day].sort()
+    );
+  };
+
+  const daysOfWeek = [
+    { label: 'Dom', value: 0 },
+    { label: 'Seg', value: 1 },
+    { label: 'Ter', value: 2 },
+    { label: 'Qua', value: 3 },
+    { label: 'Qui', value: 4 },
+    { label: 'Sex', value: 5 },
+    { label: 'Sáb', value: 6 }
+  ];
+
   return (
     <div className="space-y-6">
       <CurrencyInput label="Meta de Lucro Mensal Líquido (R$)" value={goal} onValueChange={setGoal} />
-      <p className="text-xs text-gray-500 italic">O lucro líquido é o que sobra após pagar combustível, reserva de manutenção e contas fixas.</p>
-      <Button onClick={() => onSubmit(Number(goal))} className="w-full py-4">Salvar Nova Meta</Button>
+      <p className="text-xs text-gray-500 italic mb-4">O lucro líquido é o que sobra após pagar combustível e contas fixas.</p>
+      
+      <div>
+        <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 block">Dias Trabalhados</label>
+        <div className="flex flex-wrap gap-2">
+          {daysOfWeek.map(day => (
+            <button
+              key={day.value}
+              onClick={() => toggleDay(day.value)}
+              className={cn(
+                "px-3 py-2 rounded-xl text-xs font-bold transition-all flex-1 sm:flex-none",
+                workDays.includes(day.value) 
+                  ? "bg-blue-600 text-white shadow-md" 
+                  : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
+              )}
+            >
+              {day.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-gray-400 mt-2">Usaremos esses dias para calcular a sua meta diária proporcional, ignorando as suas folgas.</p>
+      </div>
+
+      <Button onClick={() => onSubmit(Number(goal), workDays)} disabled={workDays.length === 0} className="w-full py-4 mt-6">Salvar Configuração</Button>
     </div>
   );
 }
