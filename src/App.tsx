@@ -210,11 +210,10 @@ export default function App() {
   const [showEditShiftModal, setShowEditShiftModal] = useState(false);
   const [showEditExpenseModal, setShowEditExpenseModal] = useState(false);
   const [showEditFuelModal, setShowEditFuelModal] = useState(false);
-  const [showEditTripModal, setShowEditTripModal] = useState(false);
-  const [editingTrip, setEditingTrip] = useState<{shiftId: string, trip: Trip} | null>(null);
   const [tripToDelete, setTripToDelete] = useState<{shiftId: string, tripId: string} | null>(null);
   const [shiftToDeleteAllTrips, setShiftToDeleteAllTrips] = useState<string | null>(null);
   const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null);
+  const [initialTripIdForSequentialForm, setInitialTripIdForSequentialForm] = useState<string | null>(null);
   const [expandedShiftId, setExpandedShiftId] = useState<string | null>(null);
   const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
   const [shiftTrips, setShiftTrips] = useState<Record<string, Trip[]>>({});
@@ -1479,17 +1478,6 @@ REGRAS CRÍTICAS:
       setEditingFuel(null);
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `fuel/${id}`);
-    }
-  };
-
-  const updateTrip = async (shiftId: string, tripId: string, data: Partial<Trip>) => {
-    if (!user) return;
-    try {
-      await updateDoc(doc(db, 'shifts', shiftId, 'trips', tripId), data);
-      setShowEditTripModal(false);
-      setEditingTrip(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `shifts/${shiftId}/trips/${tripId}`);
     }
   };
 
@@ -3018,6 +3006,7 @@ REGRAS CRÍTICAS:
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedShiftId(shift.id);
+                                          setInitialTripIdForSequentialForm(null);
                                           setShowTripModal(true);
                                         }}
                                         title="Adicionar Corrida"
@@ -3138,8 +3127,9 @@ REGRAS CRÍTICAS:
                                                       className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-white/50 dark:hover:bg-black/20 rounded-lg transition-colors"
                                                       onClick={(e) => {
                                                         e.stopPropagation();
-                                                        setEditingTrip({ shiftId: shift.id, trip });
-                                                        setShowEditTripModal(true);
+                                                        setSelectedShiftId(shift.id);
+                                                        setInitialTripIdForSequentialForm(trip.id);
+                                                        setShowTripModal(true);
                                                       }}
                                                       title="Editar Corrida"
                                                     >
@@ -4415,34 +4405,70 @@ REGRAS CRÍTICAS:
         />
       </Modal>
 
-      <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} title="Detalhar Corridas">
+      <Modal isOpen={showTripModal} onClose={() => { setShowTripModal(false); setInitialTripIdForSequentialForm(null); }} title="Adicionar / Editar Corridas">
         {selectedShiftId && (
-          <TripBatchForm 
+          <SequentialTripForm 
             shift={shifts.find(s => s.id === selectedShiftId)!}
             existingTrips={shiftTrips[selectedShiftId] || []}
-            onSubmit={async (trips) => {
-              for (const trip of trips) {
-                if (trip.id) {
-                  await updateDoc(doc(db, 'shifts', selectedShiftId, 'trips', trip.id), {
-                    value: trip.value,
-                    durationSeconds: trip.durationSeconds,
-                    distanceKm: trip.distanceKm,
-                    startTime: trip.startTime ? Timestamp.fromDate(trip.startTime) : null
-                  });
-                } else {
-                  await addDoc(collection(db, 'shifts', selectedShiftId, 'trips'), {
-                    userId: user?.uid,
-                    shiftId: selectedShiftId,
-                    value: trip.value,
-                    durationSeconds: trip.durationSeconds,
-                    distanceKm: trip.distanceKm,
-                    timestamp: serverTimestamp(),
-                    startTime: trip.startTime ? Timestamp.fromDate(trip.startTime) : null
-                  });
-                }
+            initialTripId={initialTripIdForSequentialForm}
+            onClose={() => { setShowTripModal(false); setInitialTripIdForSequentialForm(null); }}
+            onSave={async (tripId, data) => {
+              const currentShift = shifts.find(s => s.id === selectedShiftId);
+              if (!currentShift) return;
+              
+              const batch = writeBatch(db);
+              let diffRevenue = 0;
+
+              if (tripId) {
+                const existingTrip = (shiftTrips[selectedShiftId] || []).find(t => t.id === tripId);
+                diffRevenue = data.value - (existingTrip ? existingTrip.value : 0);
+                
+                batch.update(doc(db, 'shifts', selectedShiftId, 'trips', tripId), {
+                  value: data.value,
+                  dynamicValue: data.dynamicValue,
+                  durationSeconds: data.durationSeconds,
+                  distanceKm: data.distanceKm,
+                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null
+                });
+              } else {
+                diffRevenue = data.value;
+                const newTripRef = doc(collection(db, 'shifts', selectedShiftId, 'trips'));
+                batch.set(newTripRef, {
+                  userId: user?.uid,
+                  shiftId: selectedShiftId,
+                  value: data.value,
+                  dynamicValue: data.dynamicValue,
+                  durationSeconds: data.durationSeconds,
+                  distanceKm: data.distanceKm,
+                  timestamp: serverTimestamp(),
+                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null
+                });
+                batch.update(doc(db, 'shifts', selectedShiftId), {
+                  totalTrips: (currentShift.totalTrips || 0) + 1
+                });
               }
-              setShowTripModal(false);
-            }} 
+
+              if (diffRevenue !== 0) {
+                 batch.update(doc(db, 'shifts', selectedShiftId), {
+                   totalRevenue: (currentShift.totalRevenue || 0) + diffRevenue
+                 });
+              }
+              await batch.commit();
+            }}
+            onDelete={async (tripId) => {
+              const currentShift = shifts.find(s => s.id === selectedShiftId);
+              if (!currentShift) return;
+
+              const existingTrip = (shiftTrips[selectedShiftId] || []).find(t => t.id === tripId);
+              const batch = writeBatch(db);
+              
+              batch.delete(doc(db, 'shifts', selectedShiftId, 'trips', tripId));
+              batch.update(doc(db, 'shifts', selectedShiftId), {
+                 totalTrips: Math.max(0, (currentShift.totalTrips || 0) - 1),
+                 totalRevenue: Math.max(0, (currentShift.totalRevenue || 0) - (existingTrip ? existingTrip.value : 0))
+              });
+              await batch.commit();
+            }}
           />
         )}
       </Modal>
@@ -4493,26 +4519,7 @@ REGRAS CRÍTICAS:
         </div>
       </Modal>
 
-      <Modal isOpen={showEditTripModal} onClose={() => { setShowEditTripModal(false); setEditingTrip(null); }} title="Editar Corrida">
-        {editingTrip && (
-          <TripForm 
-            initialData={editingTrip.trip}
-            onSubmit={(data) => {
-              const tripUpdate: Partial<Trip> = {
-                value: data.value,
-                durationSeconds: data.durationSeconds,
-                distanceKm: data.distanceKm,
-              };
-              if (data.startTime) {
-                tripUpdate.startTime = Timestamp.fromDate(data.startTime);
-              } else {
-                tripUpdate.startTime = null as any; // Using any as Firestore accept nulls for delete FieldValue.delete() but it's simpler
-              }
-              return updateTrip(editingTrip.shiftId, editingTrip.trip.id, tripUpdate);
-            }}
-          />
-        )}
-      </Modal>
+
 
       <Modal isOpen={showRealtimeAiModal} onClose={() => setShowRealtimeAiModal(false)} title="Análise Rápida de Turno (IA)">
         <div className="space-y-6">
@@ -4923,206 +4930,281 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
   );
 }
 
-function TripForm({ initialData, onSubmit }: { 
-  initialData: Trip,
-  onSubmit: (data: { value: number, durationSeconds: number, distanceKm: number, startTime?: Date }) => Promise<void> | void 
-}) {
-  const [startTime, setStartTime] = useState(initialData.startTime ? format(initialData.startTime.toDate(), "yyyy-MM-dd'T'HH:mm") : '');
-  const [value, setValue] = useState(initialData.value.toString());
-  const [durationMin, setDurationMin] = useState(Math.floor(initialData.durationSeconds / 60).toString());
-  const [durationSec, setDurationSec] = useState(Math.floor(initialData.durationSeconds % 60).toString());
-  const [distance, setDistance] = useState(initialData.distanceKm.toString());
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  return (
-    <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
-      <div className="grid grid-cols-1 gap-4">
-        <Input 
-          label="Hora de Início" 
-          type="datetime-local" 
-          value={startTime} 
-          onChange={e => setStartTime(e.target.value)} 
-        />
-        <CurrencyInput 
-          label="Valor (R$)" 
-          value={value} 
-          onValueChange={setValue} 
-          placeholder="Ex: 9.80"
-        />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input 
-            label="Tempo (Min)" 
-            type="number" 
-            inputMode="numeric"
-            value={durationMin} 
-            onChange={e => setDurationMin(e.target.value)} 
-            placeholder="0"
-          />
-          <Input 
-            label="Tempo (Seg)" 
-            type="number" 
-            inputMode="numeric"
-            value={durationSec} 
-            onChange={e => setDurationSec(e.target.value)} 
-            placeholder="0"
-          />
-        </div>
-        <DistanceInput 
-          label="Distância (KM)" 
-          value={distance} 
-          onValueChange={setDistance} 
-          placeholder="Ex: 1.25"
-        />
-      </div>
 
-      <Button 
-        disabled={isSubmitting}
-        onClick={async () => {
-          setIsSubmitting(true);
-          try {
-            await onSubmit({ 
-              value: Number(value), 
-              durationSeconds: (Number(durationMin) * 60) + Number(durationSec),
-              distanceKm: Number(distance),
-              startTime: startTime ? new Date(startTime) : undefined
-            });
-          } finally {
-            setIsSubmitting(false);
-          }
-        }} 
-        className="w-full py-4"
-      >
-        {isSubmitting ? 'Salvando...' : 'Atualizar Corrida'}
-      </Button>
-    </div>
-  );
-}
-
-function TripBatchForm({ shift, existingTrips, onSubmit }: { 
+function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDelete, onClose }: { 
   shift: Shift, 
   existingTrips: Trip[],
-  onSubmit: (trips: { id?: string, value: number, durationSeconds: number, distanceKm: number, startTime?: Date }[]) => Promise<void> | void 
+  initialTripId?: string | null,
+  onSave: (tripId: string | undefined, data: any) => Promise<void>,
+  onDelete: (tripId: string) => Promise<void>,
+  onClose: () => void
 }) {
-  const pendingTrips = existingTrips.filter(t => t.value === 0 && t.distanceKm === 0);
-  const detailedTripsCount = existingTrips.length - pendingTrips.length;
-  const missingCount = Math.max(0, shift.totalTrips - existingTrips.length);
+  const [viewMode, setViewMode] = useState<'new'|'edit'>('new');
+  const [editIndex, setEditIndex] = useState(0);
+
+  const [timeStr, setTimeStr] = useState("");
+  const [valueStr, setValueStr] = useState("");
+  const [durationStr, setDurationStr] = useState("");
+  const [distanceStr, setDistanceStr] = useState("");
+  const [isDynamic, setIsDynamic] = useState(false);
+  const [dynamicValueStr, setDynamicValueStr] = useState("");
   
-  const [tripsData, setTripsData] = useState(() => {
-    const data = [];
-    // 1. Add pending trips
-    for (const t of pendingTrips) {
-      data.push({
-        id: t.id,
-        value: '',
-        durationMin: '',
-        durationSec: '',
-        distance: '',
-        startTime: t.startTime ? format(t.startTime.toDate(), "yyyy-MM-dd'T'HH:mm") : ''
-      });
-    }
-    // 2. Add missing empty slots
-    for (let i = 0; i < missingCount; i++) {
-        data.push({
-            id: undefined,
-            value: '',
-            durationMin: '',
-            durationSec: '',
-            distance: '',
-            startTime: ''
-        });
-    }
-    return data;
-  });
-
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [askAddMore, setAskAddMore] = useState(false);
 
-  const updateTrip = (index: number, field: string, val: string) => {
-    const newTrips = [...tripsData];
-    newTrips[index] = { ...newTrips[index], [field]: val };
-    setTripsData(newTrips);
+  useEffect(() => {
+    if (initialTripId) {
+      const idx = existingTrips.findIndex(t => t.id === initialTripId);
+      if (idx !== -1) {
+        setViewMode('edit');
+        setEditIndex(idx);
+      } else {
+        setViewMode('new');
+      }
+    } else {
+      setViewMode('new');
+    }
+  }, [initialTripId, existingTrips.length]); // Wait for trips to be loaded
+
+  useEffect(() => {
+    if (viewMode === 'edit') {
+       const trip = existingTrips[editIndex];
+       if (trip) {
+         setTimeStr(trip.startTime ? format(trip.startTime.toDate(), "HH:mm") : "");
+         setValueStr(trip.value.toString());
+         setDistanceStr(trip.distanceKm ? trip.distanceKm.toString() : "");
+         const mins = Math.floor(trip.durationSeconds / 60);
+         const secs = Math.floor(trip.durationSeconds % 60);
+         setDurationStr(`${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`);
+         if (trip.dynamicValue && trip.dynamicValue > 0) {
+           setIsDynamic(true);
+           setDynamicValueStr(trip.dynamicValue.toString());
+         } else {
+           setIsDynamic(false);
+           setDynamicValueStr("");
+         }
+       } else {
+         setViewMode('new');
+       }
+    }
+  }, [viewMode, editIndex, existingTrips]);
+
+  const clearNewForm = () => {
+    setTimeStr("");
+    setValueStr("");
+    setDurationStr("");
+    setDistanceStr("");
+    setIsDynamic(false);
+    setDynamicValueStr("");
   };
 
-  if (tripsData.length === 0) {
+  const handleDurationMask = (val: string) => {
+    let clean = val.replace(/\D/g, "");
+    if (clean.length > 4) clean = clean.substring(0, 4);
+    if (clean.length >= 3) {
+      clean = clean.substring(0, clean.length - 2) + ":" + clean.substring(clean.length - 2);
+    }
+    setDurationStr(clean);
+  };
+
+  const handleSave = async () => {
+    setIsSubmitting(true);
+    try {
+      let startTimeDate: Date | null = null;
+      if (timeStr) {
+        const shiftDate = shift.startTime.toDate();
+        const [hh, mm] = timeStr.split(':');
+        startTimeDate = new Date(shiftDate);
+        startTimeDate.setHours(parseInt(hh, 10));
+        startTimeDate.setMinutes(parseInt(mm, 10));
+        startTimeDate.setSeconds(0);
+      }
+      
+      const totalVal = parseFloat(valueStr || '0');
+      const dynVal = isDynamic ? parseFloat(dynamicValueStr || '0') : 0;
+      const distVal = parseFloat(distanceStr || '0');
+      
+      let sec = 0;
+      if (durationStr) {
+         const parts = durationStr.split(":");
+         if (parts.length === 2) {
+           sec = (parseInt(parts[0] || '0') * 60) + parseInt(parts[1] || '0');
+         } else {
+           sec = parseInt(durationStr || '0');
+         }
+      }
+
+      const tripData = {
+        value: totalVal,
+        dynamicValue: dynVal,
+        durationSeconds: sec,
+        distanceKm: distVal,
+        startTime: startTimeDate
+      };
+
+      if (viewMode === 'new') {
+        await onSave(undefined, tripData);
+        setAskAddMore(true);
+      } else {
+        const trip = existingTrips[editIndex];
+        if (trip) {
+           await onSave(trip.id, tripData);
+        }
+        setAskAddMore(true);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleGoBack = () => {
+     if (viewMode === 'new') {
+        if (existingTrips.length > 0) {
+           setViewMode('edit');
+           setEditIndex(existingTrips.length - 1);
+        }
+     } else if (editIndex > 0) {
+        setEditIndex(editIndex - 1);
+     }
+  };
+
+  const handleGoForward = () => {
+     if (viewMode === 'edit') {
+        if (editIndex < existingTrips.length - 1) {
+           setEditIndex(editIndex + 1);
+        } else {
+           setViewMode('new');
+           clearNewForm();
+        }
+     }
+  };
+
+  const handleDelete = async () => {
+     if (viewMode === 'edit' && existingTrips[editIndex]) {
+        setIsSubmitting(true);
+        try {
+          await onDelete(existingTrips[editIndex].id);
+          if (editIndex > 0) {
+             setEditIndex(editIndex - 1);
+          } else {
+             setViewMode('new');
+             clearNewForm();
+          }
+        } finally {
+          setIsSubmitting(false);
+        }
+     }
+  };
+
+  if (askAddMore) {
     return (
-      <div className="text-center py-8 space-y-4">
-        <CheckCircle2 size={48} className="mx-auto text-green-500" />
-        <p className="text-gray-600">Todas as {shift.totalTrips} corridas deste turno já foram detalhadas.</p>
+      <div className="text-center py-8 space-y-6">
+        <CheckCircle2 size={56} className="mx-auto text-green-500 animate-in zoom-in" />
+        <div>
+          <p className="text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider text-sm mb-1">Sucesso</p>
+          <span className="text-xl font-black text-gray-900 dark:text-white leading-tight block">Corrida Salva!</span>
+        </div>
+        <p className="text-gray-600 dark:text-gray-300">Deseja detalhar mais uma corrida neste turno?</p>
+        <div className="flex gap-4 pt-4">
+           <Button variant="outline" className="flex-1 py-4 font-bold" onClick={onClose}>Não, fechar</Button>
+           <Button className="flex-1 py-4 shadow-lg font-bold" onClick={() => { 
+             setAskAddMore(false); 
+             setViewMode('new'); 
+             clearNewForm(); 
+           }}>Sim, adicionar</Button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
-      <p className="text-sm text-gray-500 mb-4">
-        Você tem {tripsData.length} corrida(s) para detalhar.
-      </p>
-      
-      {tripsData.map((trip, i) => (
-        <div key={i} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-2xl space-y-4 border border-gray-100 dark:border-gray-700 transition-colors">
-          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Corrida #{detailedTripsCount + i + 1}</p>
-          <div className="grid grid-cols-1 gap-4">
-            <Input 
-              label="Hora de Início" 
-              type="datetime-local" 
-              value={trip.startTime} 
-              onChange={e => updateTrip(i, 'startTime', e.target.value)} 
-            />
-            <Input 
-              label="Valor (R$)" 
-              type="number" 
-              step="0.01"
-              value={trip.value} 
-              onChange={e => updateTrip(i, 'value', e.target.value)} 
-              placeholder="Ex: 9.80"
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Input 
-                label="Tempo (Min)" 
-                type="number" 
-                value={trip.durationMin} 
-                onChange={e => updateTrip(i, 'durationMin', e.target.value)} 
-                placeholder="0"
-              />
-              <Input 
-                label="Tempo (Seg)" 
-                type="number" 
-                value={trip.durationSec} 
-                onChange={e => updateTrip(i, 'durationSec', e.target.value)} 
-                placeholder="0"
-              />
-            </div>
-            <Input 
-              label="Distância (KM)" 
-              type="number" 
-              step="0.01"
-              value={trip.distance} 
-              onChange={e => updateTrip(i, 'distance', e.target.value)} 
-              placeholder="Ex: 1.25"
-            />
-          </div>
-        </div>
-      ))}
+    <div className="space-y-6">
+      <div className="flex items-center justify-between mb-2">
+        <button 
+          onClick={handleGoBack} 
+          disabled={viewMode === 'edit' && editIndex === 0}
+          className="p-2 text-gray-500 hover:text-blue-600 disabled:opacity-30 transition-colors"
+        >
+          <ChevronLeft size={24} />
+        </button>
+        <span className="text-sm font-bold text-gray-500 uppercase tracking-widest">
+          {viewMode === 'new' ? 'Nova Corrida' : `Editando Corrida ${editIndex + 1}/${existingTrips.length}`}
+        </span>
+        <button 
+          onClick={handleGoForward} 
+          disabled={viewMode === 'new'}
+          className="p-2 text-gray-500 hover:text-blue-600 disabled:opacity-30 transition-colors"
+        >
+          <ChevronRight size={24} />
+        </button>
+      </div>
 
-      <Button 
-        disabled={isSubmitting}
-        onClick={async () => {
-          setIsSubmitting(true);
-          try {
-            await onSubmit(tripsData.map(t => ({ 
-              id: t.id,
-              value: Number(t.value), 
-              durationSeconds: (Number(t.durationMin || 0) * 60) + Number(t.durationSec || 0),
-              distanceKm: Number(t.distance),
-              startTime: t.startTime ? new Date(t.startTime) : undefined
-            })));
-          } finally {
-            setIsSubmitting(false);
-          }
-        }} 
-        className="w-full py-4 sticky bottom-0 shadow-lg"
-      >
-        {isSubmitting ? 'Salvando...' : `Salvar Corridas`}
-      </Button>
+      <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl space-y-4 border border-gray-100 dark:border-gray-700 relative">
+        <div className="grid grid-cols-2 gap-4">
+          <Input 
+            label="Hora (HH:MM)" 
+            type="time" 
+            value={timeStr} 
+            onChange={e => setTimeStr(e.target.value)} 
+          />
+          <Input 
+            label="Duração (MM:SS)" 
+            type="text" 
+            value={durationStr} 
+            onChange={e => handleDurationMask(e.target.value)} 
+            placeholder="00:00"
+          />
+        </div>
+        
+        <div className="grid grid-cols-2 gap-4">
+          <CurrencyInput label="Valor Total (R$)" value={valueStr} onValueChange={setValueStr} />
+          <Input 
+            label="Distância (KM)" 
+            type="number" 
+            step="0.01"
+            value={distanceStr} 
+            onChange={e => setDistanceStr(e.target.value)} 
+            placeholder="Ex: 5.2"
+          />
+        </div>
+
+        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
+          <label className="flex items-center justify-between w-full cursor-pointer mb-3">
+            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Teve Tarifa Dinâmica?</span>
+            <div className={cn("w-12 h-6 rounded-full transition-colors relative", isDynamic ? "bg-teal-500" : "bg-gray-300 dark:bg-gray-600")}>
+              <div className={cn("w-4 h-4 rounded-full bg-white absolute top-1 transition-all", isDynamic ? "left-7" : "left-1")} />
+            </div>
+            <input type="checkbox" className="hidden" checked={isDynamic} onChange={(e) => setIsDynamic(e.target.checked)} />
+          </label>
+          
+          {isDynamic && (
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="overflow-hidden">
+              <CurrencyInput label="Valor do Dinâmico (R$)" value={dynamicValueStr} onValueChange={setDynamicValueStr} />
+            </motion.div>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-3">
+        {viewMode === 'edit' && (
+          <Button 
+            disabled={isSubmitting} 
+            onClick={handleDelete} 
+            variant="ghost" 
+             className="w-1/3 py-4 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 border border-red-100 dark:border-red-900/30"
+          >
+            Apagar
+          </Button>
+        )}
+        <Button 
+          disabled={isSubmitting || !valueStr || !durationStr}
+          onClick={handleSave} 
+          className="flex-1 py-4 shadow-lg"
+        >
+          {isSubmitting ? 'Salvando...' : 'Salvar Corrida'}
+        </Button>
+      </div>
     </div>
   );
 }
