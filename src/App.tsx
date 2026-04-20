@@ -202,6 +202,7 @@ export default function App() {
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showUpdateBalanceModal, setShowUpdateBalanceModal] = useState(false);
   const [showMonthlyGoalModal, setShowMonthlyGoalModal] = useState(false);
+  const [showExpensesDetailsModal, setShowExpensesDetailsModal] = useState(false);
   const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showPartialRevenueModal, setShowPartialRevenueModal] = useState(false);
@@ -2626,44 +2627,82 @@ REGRAS CRÍTICAS:
                     </Button>
                   </div>
                 )}
-
-                {settings && (
-                  <div className="mt-8 space-y-2">
-                    <div className="flex justify-between text-xs font-bold uppercase opacity-70 dark:text-gray-400">
-                      <span>Meta Diária</span>
-                      <span>{Math.min(100, (todayMetrics.totalRevenue / settings.dailyRevenueGoal) * 100).toFixed(0)}%</span>
-                    </div>
-                    <div className={cn("h-2 rounded-full overflow-hidden", activeShift?.status === 'active' ? "bg-black/20" : "bg-gray-100 dark:bg-gray-800")}>
-                      <motion.div 
-                        initial={{ width: 0 }}
-                        animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / settings.dailyRevenueGoal) * 100)}%` }}
-                        style={{
-                          boxShadow: (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 1 
-                            ? '0 0 15px rgba(34,197,94,0.8)' 
-                            : (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 0.75
-                            ? '0 0 10px rgba(56,189,248,0.6)'
-                            : (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 0.5
-                            ? '0 0 10px rgba(250,204,21,0.6)'
-                            : '0 0 10px rgba(248,113,113,0.6)'
-                        }}
-                        className={cn(
-                          "h-full transition-colors duration-500", 
-                          (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 1 
-                            ? "bg-green-400" 
-                            : (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 0.75
-                            ? "bg-sky-400"
-                            : (todayMetrics.totalRevenue / settings.dailyRevenueGoal) >= 0.5
-                            ? "bg-yellow-400"
-                            : "bg-red-400"
-                        )}
-                      />
-                    </div>
-                    <p className="text-[10px] opacity-60 text-center dark:text-gray-500">
-                      Faltam R$ {Math.max(0, settings.dailyRevenueGoal - todayMetrics.totalRevenue).toFixed(2)} para bater a meta de R$ {settings.dailyRevenueGoal}
-                    </p>
-                  </div>
-                )}
               </Card>
+
+              {settings && planningMetrics && (
+                <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
+                  <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 text-center uppercase tracking-widest mb-6">Meta Diária</h3>
+                  
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-end mb-2">
+                      <div>
+                        <p className="text-3xl font-black text-gray-900 dark:text-white leading-none">{Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-xl text-gray-400">%</span></p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-gray-500 uppercase">Progresso</p>
+                        <p className="font-bold text-gray-900 dark:text-white">R$ {todayMetrics.totalRevenue.toFixed(2)} / <span className="text-gray-400">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span></p>
+                      </div>
+                    </div>
+                    
+                    <div className="relative pt-2 pb-2">
+                       <div className="h-10 rounded-full bg-gray-100 dark:bg-gray-800 w-full overflow-hidden relative border border-gray-200 dark:border-gray-700 shadow-inner">
+                         {/* Track Grid */}
+                         <div className="absolute inset-0 w-full flex pointer-events-none">
+                            {[25, 50, 75].map(mark => (
+                              <div key={mark} className="flex-1 border-r border-gray-300 dark:border-gray-600 opacity-40 z-10 last:border-0" />
+                            ))}
+                         </div>
+                         
+                         {/* Progress Fill */}
+                         <motion.div 
+                           initial={{ width: 0 }}
+                           animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%` }}
+                           transition={{ duration: 1, type: "spring", stiffness: 50 }}
+                           className={cn(
+                             "h-full absolute left-0 top-0 bottom-0 z-10 transition-colors duration-500", 
+                             (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 
+                               ? "bg-green-500" 
+                               : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.75
+                               ? "bg-sky-500"
+                               : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.5
+                               ? "bg-yellow-500"
+                               : "bg-blue-600"
+                           )}
+                         >
+                            <div className="absolute inset-0 bg-white/20" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
+                         </motion.div>
+
+                         {/* End Flag */}
+                         <div className="absolute right-3 top-0 bottom-0 flex items-center justify-center z-10">
+                           <span className="text-xl drop-shadow opacity-90 grayscale">🏁</span>
+                         </div>
+                         
+                         {/* The moving car inside the bar bounds */}
+                         <motion.div 
+                           initial={{ left: '0%', x: '0%' }}
+                           animate={{ 
+                             left: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%`,
+                             x: `-${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%`
+                           }}
+                           transition={{ duration: 1, type: "spring", stiffness: 50 }}
+                           className="absolute top-0 bottom-0 flex items-center justify-center z-20 px-1 drop-shadow-md"
+                         >
+                           <span className="text-3xl block" style={{ transform: 'scaleX(-1) translateY(1px)' }}>🚕</span>
+                         </motion.div>
+                       </div>
+                    </div>
+                    
+                    <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl mt-4">
+                      <p className="text-xs text-blue-800 dark:text-blue-300 font-medium leading-relaxed">
+                        Faltam <span className="font-bold">R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para bater a meta de R$ {planningMetrics.dailyNeeded.toFixed(2)}. 
+                        {todayMetrics.totalTime > 0 && todayMetrics.totalRevenue > 0 ? (
+                           <> Com base no seu R$/hora atual (R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h), mais <span className="font-bold">{formatTime(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span> trabalhando sua meta é atingida.</>
+                        ) : ' Faça algumas corridas para analisarmos a precisão e tempo de término.'}
+                      </p>
+                    </div>
+                  </div>
+                </Card>
+              )}
 
               {/* Resumo do Dia */}
               <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
@@ -3235,8 +3274,13 @@ REGRAS CRÍTICAS:
                              <p className="text-[9px] uppercase font-bold opacity-70">Meta de Lucro Líquido</p>
                              <p className="font-black text-sm">R$ {planningMetrics.monthlyNetGoal}</p>
                            </div>
-                           <div className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 p-2 rounded-lg">
-                             <p className="text-[9px] uppercase font-bold opacity-70">Est. Despesas/Comb.</p>
+                           <div 
+                             onClick={() => setShowExpensesDetailsModal(true)}
+                             className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 p-2 rounded-lg cursor-pointer hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                           >
+                             <p className="text-[9px] uppercase font-bold opacity-70 flex items-center justify-between">
+                               Est. Despesas/Comb. <ChevronRight size={10} />
+                             </p>
                              <p className="font-black text-sm">R$ {(planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(0)}</p>
                            </div>
                         </div>
@@ -3365,52 +3409,6 @@ REGRAS CRÍTICAS:
                     ))}
                   </div>
                 )}
-              </div>
-
-              {/* Maintenance Reserve 30 Days (Moved Here) */}
-              <div className="space-y-3 pt-6">
-                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mt-4">Resumo de Manutenção (Últimos 30 Dias)</h3>
-                <Card className="bg-gradient-to-br from-gray-900 to-gray-800 text-white border-none shadow-xl overflow-hidden relative">
-                  <div className="absolute top-0 right-0 p-4 opacity-10">
-                    <SettingsIcon size={64} />
-                  </div>
-                  <div className="relative z-10 space-y-4">
-                    <div className="flex justify-between items-end">
-                      <div>
-                        <p className="text-sm text-gray-400 font-medium mb-1">Reserva Ideal ({costsMetrics.maintenancePercentage}% do Faturamento)</p>
-                        <p className="text-3xl font-bold">R$ {costsMetrics.maintenanceReserve.toFixed(2)}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-3 gap-2 pt-4 border-t border-white/10">
-                      <div>
-                        <p className="text-[10px] text-gray-400 uppercase font-bold">Pneus</p>
-                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnTires.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-gray-400 uppercase font-bold">Óleo</p>
-                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnOil.toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-gray-400 uppercase font-bold">Mecânica</p>
-                        <p className="font-bold text-sm text-red-400">R$ {costsMetrics.spentOnMaintenance.toFixed(2)}</p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2 flex justify-between items-center">
-                      <span className="text-sm text-gray-300">Saldo da Reserva</span>
-                      <span className={cn(
-                        "text-lg font-bold px-3 py-1 rounded-full",
-                        costsMetrics.reserveBalance >= 0 ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"
-                      )}>
-                        {costsMetrics.reserveBalance >= 0 ? '+' : ''}R$ {costsMetrics.reserveBalance.toFixed(2)}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-gray-400 mt-2">
-                      * O saldo positivo significa que você gastou menos do que o previsto com manutenção nos últimos 30 dias. Guarde esse valor para o futuro.
-                    </p>
-                  </div>
-                </Card>
               </div>
 
               {fuelRecords.length > 0 && (
@@ -4012,6 +4010,82 @@ REGRAS CRÍTICAS:
       </nav>
 
       {/* Modals */}
+      <Modal isOpen={showExpensesDetailsModal} onClose={() => setShowExpensesDetailsModal(false)} title="Detalhamento de Despesas do Mês">
+        <div className="space-y-6">
+           <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-2xl flex items-center justify-between border border-red-100 dark:border-red-800/50">
+             <div>
+               <p className="text-[10px] text-red-600/70 dark:text-red-400/70 font-black uppercase tracking-widest mb-1">Total Estimado</p>
+               <p className="text-2xl font-black text-red-700 dark:text-red-400">R$ {planningMetrics ? (planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(2) : '0.00'}</p>
+             </div>
+             <Wallet size={32} className="text-red-300 dark:text-red-800" />
+           </div>
+
+           <div className="space-y-4">
+             <div className="space-y-2">
+               <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Estimativa Combustível (Restante do Mês)</h4>
+               <div className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm flex justify-between items-center">
+                 <div className="flex items-center gap-3">
+                   <div className="bg-orange-100 dark:bg-orange-900/40 p-2 rounded-lg text-orange-600 dark:text-orange-400"><TrendingUp size={16} /></div>
+                   <div>
+                     <p className="font-bold text-sm dark:text-white">Combustível</p>
+                     <p className="text-[10px] text-gray-500 font-medium">Base p/ alcançar a meta calculada</p>
+                   </div>
+                 </div>
+                 <p className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics?.estimatedFuelCostRemaining.toFixed(2) || '0.00'}</p>
+               </div>
+             </div>
+
+             <div className="space-y-2">
+               <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Contas Fixas (Ativas)</h4>
+               {fixedExpenses.filter(fe => fe.active).length === 0 ? (
+                 <p className="text-xs text-gray-500 pl-1">Nenhuma conta fixa ativa.</p>
+               ) : (
+                 fixedExpenses.filter(fe => fe.active).map(fe => (
+                   <div key={fe.id} className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm flex justify-between items-center">
+                     <div className="flex items-center gap-3">
+                       <div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded-lg text-blue-600 dark:text-blue-400"><Calendar size={16} /></div>
+                       <div>
+                         <p className="font-bold text-sm dark:text-white">{fe.name}</p>
+                         <p className="text-[10px] text-gray-500 font-medium">Venc. Dia {fe.dueDay}</p>
+                       </div>
+                     </div>
+                     <p className="font-bold text-gray-900 dark:text-white">R$ {fe.amount.toFixed(2)}</p>
+                   </div>
+                 ))
+               )}
+             </div>
+
+             <div className="space-y-2">
+               <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest pl-1">Despesas Avulsas (Este Mês)</h4>
+               {expenses.filter(e => {
+                  const d = e.date ? ensureDate(e.date) : new Date();
+                  const currentMonthStr = format(new Date(), 'yyyy-MM');
+                  return format(d, 'yyyy-MM') === currentMonthStr;
+               }).length === 0 ? (
+                 <p className="text-xs text-gray-500 pl-1">Nenhuma despesa extra lançada este mês.</p>
+               ) : (
+                 expenses.filter(e => {
+                  const d = e.date ? ensureDate(e.date) : new Date();
+                  const currentMonthStr = format(new Date(), 'yyyy-MM');
+                  return format(d, 'yyyy-MM') === currentMonthStr;
+                 }).map(e => (
+                   <div key={e.id} className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm flex justify-between items-center">
+                     <div className="flex items-center gap-3">
+                       <div className="bg-red-100 dark:bg-red-900/40 p-2 rounded-lg text-red-600 dark:text-red-400"><FileText size={16} /></div>
+                       <div>
+                         <p className="font-bold text-sm dark:text-white">{e.category}</p>
+                         <p className="text-[10px] text-gray-500 font-medium">{format(ensureDate(e.date), "dd/MM/yyyy")}</p>
+                       </div>
+                     </div>
+                     <p className="font-bold text-gray-900 dark:text-white">R$ {e.value.toFixed(2)}</p>
+                   </div>
+                 ))
+               )}
+             </div>
+           </div>
+        </div>
+      </Modal>
+
       <Modal isOpen={showAiAnalysisModal} onClose={() => setShowAiAnalysisModal(false)} title="Análise de IA">
         <div className="space-y-6">
           <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl flex items-center gap-3 border border-blue-100 dark:border-blue-800/50">
@@ -5190,7 +5264,6 @@ function UpdateBalanceForm({ onSubmit, currentBalance }: {
 
 function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings, onSubmit: (data: Partial<UserSettings>) => void, onBackup: () => void }) {
   const [maintPerc, setMaintPerc] = useState((settings.maintenancePercentage ?? 10).toString());
-  const [goal, setGoal] = useState(settings.dailyRevenueGoal.toString());
   const [monthlyNet, setMonthlyNet] = useState((settings.monthlyNetGoal || 2000).toString());
   const [fuel, setFuel] = useState(settings.defaultFuelPrice.toString());
   const [cons, setCons] = useState(settings.avgConsumption.toString());
@@ -5208,7 +5281,6 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
       <Card className="space-y-6">
         <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Geral</h3>
         <Input label="Custo de Manutenção (% do Faturamento)" type="number" step="1" value={maintPerc} onChange={e => setMaintPerc(e.target.value)} placeholder="Ex: 10" />
-        <Input label="Meta de Faturamento Diário (R$)" type="number" value={goal} onChange={e => setGoal(e.target.value)} placeholder="Ex: 250" />
         <Input label="Meta Mensal Líquida Desejada (R$)" type="number" value={monthlyNet} onChange={e => setMonthlyNet(e.target.value)} placeholder="Ex: 2000" />
         <Input label="Preço Médio do Combustível (R$)" type="number" step="0.01" value={fuel} onChange={e => setFuel(e.target.value)} placeholder="Ex: 5.50" />
         <Input label="Consumo Médio do Carro (KM/L)" type="number" step="0.1" value={cons} onChange={e => setCons(e.target.value)} placeholder="Ex: 12.0" />
@@ -5253,7 +5325,6 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
       <Button 
         onClick={() => onSubmit({
           maintenancePercentage: Number(maintPerc),
-          dailyRevenueGoal: Number(goal),
           monthlyNetGoal: Number(monthlyNet),
           defaultFuelPrice: Number(fuel),
           avgConsumption: Number(cons),
