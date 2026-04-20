@@ -980,24 +980,29 @@ REGRAS CRÍTICAS:
   };
 
   const updatePartialRevenue = async (newRevenueTotal: number, newKm: number) => {
-    if (!activeShift) return;
+    if (!activeShift || !user) return;
     try {
-      const diffKm = newKm ? newKm - activeShift.lastKm : 0;
-      const newWorkKm = activeShift.totalWorkKm + Math.max(0, diffKm);
+      const currentRevenue = activeShift.totalRevenue || 0;
+      const currentKm = activeShift.lastKm || activeShift.startKm || 0;
+      const currentWorkKm = activeShift.totalWorkKm || 0;
+
+      const diffKm = newKm ? newKm - currentKm : 0;
+      const newWorkKm = currentWorkKm + Math.max(0, diffKm);
       
       const updates: any = {
         totalRevenue: newRevenueTotal
       };
       
-      const diffRevenue = newRevenueTotal - (activeShift.totalRevenue || 0);
+      const diffRevenue = newRevenueTotal - currentRevenue;
       if (diffRevenue !== 0) {
         const settingsRef = doc(db, 'settings', user.uid);
+        const currentBalance = settings?.platformBalance || 0;
         await updateDoc(settingsRef, {
-          platformBalance: (settings?.platformBalance || 0) + diffRevenue
+          platformBalance: currentBalance + diffRevenue
         });
       }
       
-      if (newKm && diffKm > 0) {
+      if (newKm && diffKm >= 0) {
         updates.lastKm = newKm;
         updates.totalWorkKm = newWorkKm;
       }
@@ -4326,8 +4331,11 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (Number(revenue) >= 0) {
-      onSubmit(Number(revenue), Number(km));
+    const finalRevenue = revenue === '' ? currentRevenue : Number(revenue);
+    const finalKm = km === '' ? initialKm : Number(km);
+    
+    if (finalRevenue >= 0 && finalKm >= 0) {
+      onSubmit(finalRevenue, finalKm);
     }
   };
 
@@ -4342,7 +4350,7 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
           label="Total Atualizado (R$)"
           value={revenue}
           onValueChange={setRevenue}
-          placeholder="Ex: 50.00"
+          placeholder={`Ex: ${currentRevenue > 0 ? currentRevenue : '50.00'}`}
         />
         <Input 
           label="KM Atual do Painel" 
@@ -4350,10 +4358,19 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
           inputMode="numeric"
           value={km} 
           onChange={e => setKm(e.target.value)} 
-          placeholder="Ex: 45050"
+          placeholder={`Ex: ${initialKm || '45050'}`}
         />
       </div>
-      <Button type="submit" className="w-full py-4" disabled={!revenue || Number(revenue) < 0 || !km}>Atualizar Faturamento e KM</Button>
+      <Button 
+        type="submit" 
+        className="w-full py-4" 
+        disabled={(revenue === '' && currentRevenue === 0) && (km === '' && initialKm === 0)}
+      >
+        Atualizar Faturamento e KM
+      </Button>
+      <p className="text-[10px] text-gray-400 text-center uppercase font-bold tracking-widest">
+        Dica: Se deixar vazio, os valores atuais serão mantidos.
+      </p>
     </form>
   );
 }
