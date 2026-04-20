@@ -2939,71 +2939,69 @@ REGRAS CRÍTICAS:
                           >
                             {group.shifts.map((shift, index) => (
                               <Card key={shift.id} className="hover:border-blue-200 transition-all duration-300 cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500 shadow-sm hover:shadow-md bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500">
-                                <div className="p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
-                                  <div className="flex justify-between items-center sm:items-start">
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between mb-3">
-                                        <div className="flex items-center gap-2">
-                                          <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg flex items-center justify-center shrink-0">
-                                            <Car size={18} className="text-blue-600 dark:text-blue-400" />
-                                          </div>
-                                          <p className="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none">
-                                            Turno {group.shifts.length - index}
-                                          </p>
-                                        </div>
-                                        <p className="text-xs font-bold text-gray-500 dark:text-gray-400">
-                                          <Clock size={12} className="inline mr-1 opacity-70 mb-0.5" />
+                                <div className="p-3 sm:p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
+                                  <div className="flex justify-between items-start mb-3">
+                                    <div className="flex items-center gap-3">
+                                      <div className="bg-blue-100 dark:bg-blue-900/30 p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0">
+                                        <Car size={18} className="text-blue-600 dark:text-blue-400" />
+                                      </div>
+                                      <div>
+                                        <p className="text-[10px] sm:text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">
+                                          Turno {group.shifts.length - index}
+                                        </p>
+                                        <p className="text-[11px] sm:text-xs font-bold text-gray-400 dark:text-gray-500 flex items-center gap-1">
+                                          <Clock size={10} className="opacity-70" />
                                           {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
                                         </p>
                                       </div>
-                                      
-                                      <div className="flex items-baseline gap-1 mb-3">
-                                        <span className="text-2xl font-black text-gray-900 dark:text-white leading-tight">
-                                          R$ {shift.totalRevenue.toFixed(2)}
-                                        </span>
-                                      </div>
+                                    </div>
+                                    
+                                    <div className="flex flex-col items-end gap-1">
+                                      <span className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white leading-none mt-1">
+                                        R$ {shift.totalRevenue.toFixed(2)}
+                                      </span>
+                                      <motion.div 
+                                        animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}
+                                        className="text-gray-300 dark:text-gray-600 mt-1"
+                                      >
+                                        <ChevronRight size={18} />
+                                      </motion.div>
+                                    </div>
+                                  </div>
 
-                                      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
-                                        <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg border border-gray-200/50 dark:border-gray-700/50">
-                                          <Clock size={14} className="opacity-70 text-gray-400" />
-                                          {formatTime(shift.activeTimeSeconds)}
-                                        </div>
-                                        {shift.totalTrips > 0 && (
-                                          <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-lg border border-blue-100/50 dark:border-blue-800/30">
-                                            <Users size={14} className="opacity-70 text-blue-500" />
-                                            {shift.totalTrips} Corridas
-                                          </div>
-                                        )}
-                                        <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 text-xs font-bold bg-indigo-50 dark:bg-indigo-900/20 px-2.5 py-1.5 rounded-lg border border-indigo-100/50 dark:border-indigo-800/30">
-                                          <MapPin size={14} className="opacity-70 text-indigo-500" />
-                                          {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
-                                        </div>
+                                  <div className="flex flex-wrap gap-2 mb-3">
+                                    <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 text-[10px] sm:text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-gray-200/50 dark:border-gray-700/50">
+                                      <Clock size={12} className="opacity-70 text-gray-400" />
+                                      {formatTime(shift.activeTimeSeconds)}
+                                    </div>
+                                    {shift.totalTrips > 0 && (
+                                      <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 text-[10px] sm:text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-blue-100/50 dark:border-blue-800/30">
+                                        <Users size={12} className="opacity-70 text-blue-500" />
+                                        {shift.totalTrips} Corridas
                                       </div>
-                                      
-                                      <div className="flex items-center gap-3 mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/80">
-                                        <div className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                    )}
+                                    <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 text-[10px] sm:text-xs font-bold bg-indigo-50 dark:bg-indigo-900/20 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-indigo-100/50 dark:border-indigo-800/30">
+                                      <MapPin size={12} className="opacity-70 text-indigo-500" />
+                                      {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 pt-3 border-t border-gray-100 dark:border-gray-800/80">
+                                    <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto px-1 sm:px-0">
+                                      <div className="flex items-center gap-3">
+                                        <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-gray-500 dark:text-gray-400">
                                           <span className="text-blue-600 dark:text-blue-400">{shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}</span>/km
                                         </div>
-                                        <div className="flex items-center gap-1 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                        <div className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
+                                        <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-gray-500 dark:text-gray-400">
                                           <span className="text-green-600 dark:text-green-400">{shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}</span>/h
                                         </div>
                                       </div>
                                     </div>
-                                    <div className="flex items-center gap-2 ml-4 self-center sm:self-start">
+
+                                    <div className="flex items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
                                       <button 
-                                        className="w-10 h-10 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-95 shadow-sm" 
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setSelectedShiftId(shift.id);
-                                          setShowTripModal(true);
-                                        }}
-                                        title="Adicionar Corrida"
-                                      >
-                                        <Plus size={20} strokeWidth={3} />
-                                      </button>
-                                      
-                                      <button 
-                                        className="flex w-10 h-10 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-400 dark:text-gray-500 hover:text-blue-600 dark:hover:text-blue-400 transition-all active:scale-95 border border-transparent hover:border-gray-200 dark:hover:border-gray-700"
+                                        className="flex-1 sm:flex-none sm:w-auto h-9 px-3 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all active:scale-95 border border-gray-200/50 dark:border-gray-700/50"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingShift(shift);
@@ -3011,15 +3009,22 @@ REGRAS CRÍTICAS:
                                         }}
                                         title="Editar Turno"
                                       >
-                                        <Edit2 size={16} />
+                                        <Edit2 size={14} />
+                                        <span className="ml-2 text-[11px] font-bold sm:hidden">Editar</span>
                                       </button>
-
-                                      <motion.div 
-                                        animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}
-                                        className="w-8 h-8 flex items-center justify-center text-gray-300 dark:text-gray-600"
+                                      
+                                      <button 
+                                        className="flex-1 sm:flex-none sm:w-auto h-9 px-3 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-95 shadow-sm border border-blue-100/50 dark:border-blue-800/30"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setSelectedShiftId(shift.id);
+                                          setShowTripModal(true);
+                                        }}
+                                        title="Adicionar Corrida"
                                       >
-                                        <ChevronRight size={24} />
-                                      </motion.div>
+                                        <Plus size={16} strokeWidth={3} />
+                                        <span className="ml-1 text-[11px] font-bold sm:hidden">Corrida</span>
+                                      </button>
                                     </div>
                                   </div>
                                 </div>
