@@ -10,7 +10,7 @@ import {
   Plus, ChevronRight, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon, Target, Activity,
   Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X,
-  Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon
+  Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon, Navigation
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -200,6 +200,7 @@ export default function App() {
   const [showFixedExpenseModal, setShowFixedExpenseModal] = useState(false);
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showUpdateBalanceModal, setShowUpdateBalanceModal] = useState(false);
+  const [showMonthlyGoalModal, setShowMonthlyGoalModal] = useState(false);
   const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showPartialRevenueModal, setShowPartialRevenueModal] = useState(false);
@@ -1840,34 +1841,6 @@ REGRAS CRÍTICAS:
     return { data: result, minH, maxH };
   }, [shifts]);
 
-  const goalsProjection = useMemo(() => {
-    if (!settings) return null;
-    const now = new Date();
-    const daysRemainingInWeek = 7 - (now.getDay() === 0 ? 7 : now.getDay()); // Assuming week ends on Sun
-    const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-    const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
-    
-    const weeklyShifts = shifts.filter(s => {
-      const d = ensureDate(s.startTime);
-      return isWithinInterval(d, { start: weekStart, end: weekEnd });
-    });
-    
-    const weeklyRevenue = weeklyShifts.reduce((acc, s) => acc + s.totalRevenue, 0) + (activeShift?.totalRevenue || 0);
-    const weeklyGoal = settings.dailyRevenueGoal * 6; // Assuming 6 days work week
-    const remaining = Math.max(0, weeklyGoal - weeklyRevenue);
-    
-    const workdaySlotsRemaining = Math.max(1, daysRemainingInWeek);
-    const requiredDaily = remaining / workdaySlotsRemaining;
-    
-    return {
-      weeklyRevenue,
-      weeklyGoal,
-      remaining,
-      requiredDaily,
-      daysRemaining: workdaySlotsRemaining
-    };
-  }, [shifts, activeShift, settings]);
-
   const fuelTrends = useMemo(() => {
     const sortedFuel = [...fuelRecords].sort((a, b) => ensureDate(a.date).getTime() - ensureDate(b.date).getTime());
     if (sortedFuel.length < 2) return null;
@@ -2142,34 +2115,109 @@ REGRAS CRÍTICAS:
 
   const planningMetrics = useMemo(() => {
     if (!settings) return null;
-    
-    const totalFixed = fixedExpenses.reduce((acc, fe) => acc + fe.amount, 0);
+    const now = new Date();
+    const startOfM = startOfMonth(now);
+    const endOfM = endOfMonth(now);
+    const daysInMonth = differenceInDays(endOfM, startOfM) + 1;
+    const daysElapsed = differenceInDays(now, startOfM) + 1;
+    const daysRemaining = Math.max(1, daysInMonth - daysElapsed + 1);
+
+    const thisMonthShifts = shifts.filter(s => {
+      const d = ensureDate(s.startTime);
+      return isWithinInterval(d, { start: startOfM, end: endOfM });
+    });
+
+    const revenueSoFar = thisMonthShifts.reduce((acc, s) => acc + s.totalRevenue, 0) + (activeShift?.totalRevenue || 0);
+
+    const totalFixed = fixedExpenses.reduce((acc, fe) => acc + (fe.active ? fe.amount : 0), 0);
     const monthlyNetGoal = settings.monthlyNetGoal || 2000;
     const maintenancePercentage = settings.maintenancePercentage || 10;
     
-    // Estimated monthly fuel based on last 30 days or default
-    const last30DaysFuel = fuelRecords.filter(f => {
-      const d = ensureDate(f.date);
-      return d >= subDays(new Date(), 30);
-    });
-    const monthlyFuel = last30DaysFuel.reduce((acc, f) => acc + f.totalValue, 0) || 1500; // heuristic default if none
+    // Performance Projections (Last 30 days)
+    const thirtyDaysAgo = subDays(now, 30);
+    const last30Shifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= thirtyDaysAgo);
     
-    // Formula: (Revenue * (1 - maint/100)) - fuel - fixed = net
-    // Revenue * (1 - maint/100) = net + fuel + fixed
-    // Revenue = (net + fuel + fixed) / (1 - maint/100)
+    const totalRev30 = last30Shifts.reduce((acc, s) => acc + s.totalRevenue, 0);
+    const totalHrs30 = last30Shifts.reduce((acc, s) => acc + (s.activeTimeSeconds / 3600), 0);
+    const totalKm30 = last30Shifts.reduce((acc, s) => acc + (s.totalWorkKm || (s.endKm - s.startKm)), 0);
+
+    const avgRph = totalHrs30 > 0 ? totalRev30 / totalHrs30 : 40; // fallback to 40 R$/h
+    const avgRpkm = totalKm30 > 0 ? totalRev30 / totalKm30 : 2.5; // fallback to 2.5 R$/km
+
+    // Fuel Estimation
+    const last30Fuel = fuelRecords.filter(f => ensureDate(f.date) >= thirtyDaysAgo);
+    const fuelCostPerKm = last30Fuel.length > 0 
+      ? last30Fuel.reduce((acc, f) => acc + f.totalValue, 0) / (fuelRecords.reduce((acc, f, i) => i > 0 && ensureDate(f.date) >= thirtyDaysAgo ? acc + (f.km - fuelRecords[i-1].km) : acc, 0) || 1)
+      : (settings.defaultFuelPrice / (settings.avgConsumption || 12));
+
+    // Variable Costs = Fuel + Maintenance Reserve (Percentage of Revenue)
+    // Formula for required Revenue (R):
+    // R - (R * FuelCost/avgRpkm) - (R * Maint%/100) - FixedCostsStage = NetGoal
+    // R * (1 - (FuelCost/avgRpkm) - (Maint%/100)) = NetGoal + FixedCosts
+    // We simplify: Variable costs are roughly Maint% + (FuelCost / avgRpkm)
+    const varCostRatio = (maintenancePercentage / 100) + (fuelCostPerKm / avgRpkm);
     
-    const revenueNeeded = (monthlyNetGoal + monthlyFuel + totalFixed) / (1 - (maintenancePercentage / 100));
-    const dailyNeeded = revenueNeeded / 24; // Average 24 working days
+    // Safety check for ratio
+    const adjRatio = Math.max(0.1, 1 - varCostRatio);
     
+    const revenueNeededTotal = (monthlyNetGoal + totalFixed) / adjRatio;
+    const revenueRemaining = Math.max(0, revenueNeededTotal - revenueSoFar);
+    const dailyNeeded = revenueRemaining / daysRemaining;
+
+    // Projections
+    const hoursPerDay = dailyNeeded / avgRph;
+    const kmPerDay = dailyNeeded / avgRpkm;
+    
+    const progressPerc = Math.min(100, (revenueSoFar / revenueNeededTotal) * 100);
+
     return {
       totalFixed,
       monthlyNetGoal,
-      monthlyFuel,
-      revenueNeeded,
+      revenueNeededTotal,
+      revenueSoFar,
+      revenueRemaining,
       dailyNeeded,
-      maintenancePercentage
+      hoursPerDay,
+      kmPerDay,
+      progressPerc,
+      daysRemaining,
+      avgRph,
+      avgRpkm
     };
-  }, [fixedExpenses, settings, fuelRecords]);
+  }, [fixedExpenses, settings, fuelRecords, shifts, activeShift]);
+
+  const goalsProjection = useMemo(() => {
+    if (!settings) return null;
+    const now = new Date();
+    const daysRemainingInWeek = 7 - (now.getDay() === 0 ? 7 : now.getDay()); // Assuming week ends on Sun
+    const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+    
+    const weeklyShifts = shifts.filter(s => {
+      const d = ensureDate(s.startTime);
+      return isWithinInterval(d, { start: weekStart, end: weekEnd });
+    });
+    
+    const weeklyRevenue = weeklyShifts.reduce((acc, s) => acc + s.totalRevenue, 0) + (activeShift?.totalRevenue || 0);
+    
+    // Logic: If planning metrics are available, use the dailyNeeded * 7 as the goal for a "standard" week
+    // To keep it balanced with monthly goal defined in "Meu Caixa"
+    const weeklyGoal = planningMetrics 
+      ? planningMetrics.dailyNeeded * 7 
+      : (settings.dailyRevenueGoal * 6);
+
+    const remaining = Math.max(0, weeklyGoal - weeklyRevenue);
+    const workdaySlotsRemaining = Math.max(1, daysRemainingInWeek);
+    const requiredDaily = remaining / workdaySlotsRemaining;
+    
+    return {
+      weeklyRevenue,
+      weeklyGoal,
+      remaining,
+      requiredDaily,
+      daysRemaining: workdaySlotsRemaining
+    };
+  }, [shifts, activeShift, settings, planningMetrics]);
 
   const chartData = useMemo(() => {
     const finishedShifts = shifts
@@ -2918,28 +2966,74 @@ REGRAS CRÍTICAS:
                 {planningMetrics && (
                   <Card className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/10 dark:to-blue-900/10 border-indigo-100 dark:border-indigo-800/50 p-6 flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <div className="bg-indigo-600 p-1.5 rounded-lg">
-                          <Target size={16} className="text-white" />
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="bg-indigo-600 p-1.5 rounded-lg">
+                            <Target size={16} className="text-white" />
+                          </div>
+                          <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-300 uppercase tracking-widest">Planejamento Mensal</h3>
                         </div>
-                        <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-300 uppercase tracking-widest">Planejamento Mensal</h3>
+                        <button 
+                          onClick={() => setShowMonthlyGoalModal(true)}
+                          className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                        >
+                          <Edit2 size={10} /> Editar Meta
+                        </button>
                       </div>
+
+                      {/* Progress Bar */}
+                      <div className="mb-6 space-y-1.5">
+                        <div className="flex justify-between text-[10px] font-black text-indigo-900/40 dark:text-indigo-100/40 uppercase tracking-tighter">
+                          <span>Realizado: R$ {planningMetrics.revenueSoFar.toFixed(0)}</span>
+                          <span>Necessário: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
+                        </div>
+                        <div className="h-3 bg-indigo-200/50 dark:bg-indigo-950/50 rounded-full overflow-hidden border border-indigo-200/30">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${planningMetrics.progressPerc}%` }}
+                            className="h-full bg-indigo-600 shadow-[0_0_10px_rgba(79,70,229,0.3)]"
+                          />
+                        </div>
+                        <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 text-right">{planningMetrics.progressPerc.toFixed(1)}% Completo</p>
+                      </div>
+
                       <div className="grid grid-cols-2 gap-4 mb-4">
                         <div>
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Faturamento Necessário</p>
-                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.revenueNeeded.toFixed(0)}</p>
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Faturamento Restante</p>
+                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.revenueRemaining.toFixed(0)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Sugerida</p>
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Restante</p>
                           <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
                         </div>
                       </div>
-                    </div>
-                    <div className="pt-4 border-t border-indigo-100 dark:border-indigo-800/50">
-                      <div className="flex justify-between text-[10px] font-bold text-indigo-600/80 dark:text-indigo-400/80 uppercase">
-                        <span>Lucro: R$ {planningMetrics.monthlyNetGoal}</span>
-                        <span>Custos: R$ {(planningMetrics.totalFixed + planningMetrics.monthlyFuel + (planningMetrics.revenueNeeded * planningMetrics.maintenancePercentage / 100)).toFixed(0)}</span>
+
+                      {/* Projections Section */}
+                      <div className="grid grid-cols-2 gap-3 py-3 border-y border-indigo-100 dark:border-indigo-800/50 mb-4">
+                        <div className="flex items-center gap-2">
+                          <div className="bg-indigo-100 dark:bg-indigo-900/40 p-1.5 rounded-lg text-indigo-600">
+                            <Clock size={12} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase">Esforço Diário</p>
+                            <p className="text-xs font-black dark:text-white">~{planningMetrics.hoursPerDay.toFixed(1)}h/dia</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="bg-indigo-100 dark:bg-indigo-900/40 p-1.5 rounded-lg text-indigo-600">
+                            <Navigation size={12} />
+                          </div>
+                          <div>
+                            <p className="text-[9px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase">Rodagem Diária</p>
+                            <p className="text-xs font-black dark:text-white">~{planningMetrics.kmPerDay.toFixed(0)}km/dia</p>
+                          </div>
+                        </div>
                       </div>
+                    </div>
+                    
+                    <div className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-medium">
+                      <p>Média de ganhos: <span className="font-bold">R$ {planningMetrics.avgRph.toFixed(0)}/h</span> e <span className="font-bold">R$ {planningMetrics.avgRpkm.toFixed(2)}/km</span></p>
+                      <p className="mt-1">Meta de Lucro: <span className="font-bold text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.monthlyNetGoal}</span> • Restam <span className="font-bold">{planningMetrics.daysRemaining}</span> dias.</p>
                     </div>
                   </Card>
                 )}
@@ -3385,8 +3479,13 @@ REGRAS CRÍTICAS:
                               <p className="text-3xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight">Meta</p>
-                              <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
+                              <div className="flex flex-col items-end">
+                                <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight">Meta</p>
+                                <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
+                                {planningMetrics && (
+                                  <span className="text-[8px] bg-white/20 px-1 rounded uppercase font-black tracking-tighter mt-0.5">Sincronizada</span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           
@@ -3972,6 +4071,20 @@ REGRAS CRÍTICAS:
 
       <Modal isOpen={showUpdateBalanceModal} onClose={() => setShowUpdateBalanceModal(false)} title="Atualizar Saldo">
         <UpdateBalanceForm onSubmit={updatePlatformBalance} currentBalance={settings?.platformBalance || 0} />
+      </Modal>
+
+      <Modal isOpen={showMonthlyGoalModal} onClose={() => setShowMonthlyGoalModal(false)} title="Definir Lucro Desejado">
+        <MonthlyGoalForm 
+          currentGoal={settings?.monthlyNetGoal || 2000} 
+          onSubmit={(newGoal) => {
+            updatePlatformBalance(settings?.platformBalance || 0); // reusing setting update logic
+            // Actually I should probably use a generic updateSettings function or just update platform balance update logic to include more
+            if (user) {
+               updateDoc(doc(db, 'settings', user.uid), { monthlyNetGoal: newGoal });
+            }
+            setShowMonthlyGoalModal(false);
+          }} 
+        />
       </Modal>
 
       <Modal isOpen={showTripModal} onClose={() => setShowTripModal(false)} title="Detalhar Corridas">
@@ -4670,6 +4783,17 @@ function TripBatchForm({ shift, existingTrips, onSubmit }: {
       >
         {isSubmitting ? 'Salvando...' : `Salvar Corridas`}
       </Button>
+    </div>
+  );
+}
+
+function MonthlyGoalForm({ onSubmit, currentGoal }: { onSubmit: (goal: number) => void, currentGoal: number }) {
+  const [goal, setGoal] = useState(currentGoal.toString());
+  return (
+    <div className="space-y-6">
+      <CurrencyInput label="Meta de Lucro Mensal Líquido (R$)" value={goal} onValueChange={setGoal} />
+      <p className="text-xs text-gray-500 italic">O lucro líquido é o que sobra após pagar combustível, reserva de manutenção e contas fixas.</p>
+      <Button onClick={() => onSubmit(Number(goal))} className="w-full py-4">Salvar Nova Meta</Button>
     </div>
   );
 }
