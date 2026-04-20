@@ -1574,6 +1574,60 @@ REGRAS CRÍTICAS:
     }
   };
 
+  const generateAIPlanning = async () => {
+    if (!user || !planningMetrics) return;
+    setIsGeneratingAi(true);
+    try {
+      const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!apiKeyToUse) {
+        setAiReport("Configuração Necessária: Para usar a IA, adicione sua chave Gemini nas configurações.");
+        setShowAiResultModal(true);
+        return;
+      }
+
+      const activeAi = new GoogleGenAI({ apiKey: apiKeyToUse });
+
+      const prompt = `
+        Aja como um estrategista financeiro e mentor para motoristas de aplicativo.
+        Baseado nos dados atuais do mês:
+        - Meta de Lucro Líquido DESEJADA: R$ ${planningMetrics.monthlyNetGoal.toFixed(2)}
+        - Custos Fixos (Contas): R$ ${planningMetrics.totalFixed.toFixed(2)}
+        - Faturamento Total Necessário (incluindo combustível e manutenção): R$ ${planningMetrics.revenueNeededTotal.toFixed(2)}
+        - Faturado até agora: R$ ${planningMetrics.revenueSoFar.toFixed(2)}
+        - Faturamento RESTANTE: R$ ${planningMetrics.revenueRemaining.toFixed(2)}
+        - Dias restantes no mês: ${planningMetrics.daysRemaining} dias
+        
+        PERFORMANCE ATUAL:
+        - Média de ganhos por hora: R$ ${planningMetrics.avgRph.toFixed(2)}/h
+        - Média de ganhos por KM: R$ ${planningMetrics.avgRpkm.toFixed(2)}/km
+        - Horas totais necessárias estimadas: ${planningMetrics.totalHoursRemaining.toFixed(1)}h
+        - Horas necessárias por dia: ${planningMetrics.hoursPerDay.toFixed(1)}h
+        
+        Crie um planejamento estratégico detalhado e motivador. 
+        1. Analise se a meta é realista com base na performance atual.
+        2. Dê dicas de como aumentar a eficiência (R$/km e R$/h).
+        3. Organize uma sugestão de jornada diária (ex: turnos quebrados, melhores horários).
+        4. Incentive o motorista.
+        
+        Responda em Markdown, use emojis e seja direto.
+      `;
+
+      const response = await activeAi.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+      });
+
+      setAnalysisResult(response.text || "Não foi possível gerar o plano no momento.");
+      setShowAiResultModal(true);
+    } catch (err: any) {
+      console.error(err);
+      setAnalysisResult("Erro ao gerar planejamento. Verifique sua conexão e chave API.");
+      setShowAiResultModal(true);
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
   const generateRealtimeAiAnalysis = async () => {
     if (!user || !activeShift) return;
     setIsGeneratingRealtimeAi(true);
@@ -2173,6 +2227,11 @@ REGRAS CRÍTICAS:
     const hoursPerDay = dailyNeeded / avgRph;
     const kmPerDay = dailyNeeded / avgRpkm;
     
+    // Total remaining hours to hit goal
+    const totalHoursRemaining = revenueRemaining / avgRph;
+    const fuelCostPerKmEffective = fuelCostPerKm || (settings.defaultFuelPrice / (settings.avgConsumption || 12));
+    const estimatedFuelCostRemaining = (revenueRemaining / avgRpkm) * fuelCostPerKmEffective;
+
     const progressPerc = Math.min(100, (revenueSoFar / revenueNeededTotal) * 100);
 
     return {
@@ -2187,7 +2246,9 @@ REGRAS CRÍTICAS:
       progressPerc,
       daysRemaining,
       avgRph,
-      avgRpkm
+      avgRpkm,
+      totalHoursRemaining,
+      estimatedFuelCostRemaining
     };
   }, [fixedExpenses, settings, fuelRecords, shifts, activeShift]);
 
@@ -2969,76 +3030,93 @@ REGRAS CRÍTICAS:
                 </div>
 
                 {planningMetrics && (
-                  <Card className="bg-gradient-to-br from-indigo-50 to-blue-50 dark:from-indigo-900/10 dark:to-blue-900/10 border-indigo-100 dark:border-indigo-800/50 p-6 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-4">
-                        <div className="flex items-center gap-2">
-                          <div className="bg-indigo-600 p-1.5 rounded-lg">
-                            <Target size={16} className="text-white" />
-                          </div>
-                          <h3 className="text-sm font-bold text-indigo-900 dark:text-indigo-300 uppercase tracking-widest">Planejamento Mensal</h3>
+                  <Card className="bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/20 dark:to-gray-900 border-indigo-100 dark:border-indigo-800 shadow-xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-4 opacity-5">
+                      <Target size={120} />
+                    </div>
+                    
+                    <div className="relative z-10">
+                      <div className="flex justify-between items-center mb-6">
+                        <div>
+                          <h3 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">Resumo do Mês</h3>
+                          <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100 italic">
+                            Faltam {planningMetrics.daysRemaining} dias
+                          </p>
                         </div>
                         <button 
                           onClick={() => setShowMonthlyGoalModal(true)}
-                          className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                          className="p-2 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-xl hover:scale-110 transition-transform"
+                          title="Editar Meta de Lucro"
                         >
-                          <Edit2 size={10} /> Editar Meta
+                          <Edit2 size={16} />
                         </button>
                       </div>
 
                       {/* Progress Bar */}
-                      <div className="mb-6 space-y-1.5">
-                        <div className="flex justify-between text-[10px] font-black text-indigo-900/40 dark:text-indigo-100/40 uppercase tracking-tighter">
-                          <span>Realizado: R$ {planningMetrics.revenueSoFar.toFixed(0)}</span>
-                          <span>Necessário: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
+                      <div className="mb-6 space-y-2">
+                        <div className="flex justify-between text-[11px] font-black text-indigo-900/60 dark:text-indigo-100/60 uppercase tracking-tighter">
+                          <span>R$ {planningMetrics.revenueSoFar.toFixed(0)} feitos</span>
+                          <span>Alvo: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
                         </div>
-                        <div className="h-3 bg-indigo-200/50 dark:bg-indigo-950/50 rounded-full overflow-hidden border border-indigo-200/30">
+                        <div className="h-4 bg-indigo-200/40 dark:bg-indigo-950/50 rounded-full overflow-hidden border border-indigo-200/30 p-0.5">
                           <motion.div 
                             initial={{ width: 0 }}
                             animate={{ width: `${planningMetrics.progressPerc}%` }}
-                            className="h-full bg-indigo-600 shadow-[0_0_10px_rgba(79,70,229,0.3)]"
+                            className="h-full bg-indigo-600 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.4)]"
                           />
                         </div>
-                        <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 text-right">{planningMetrics.progressPerc.toFixed(1)}% Completo</p>
+                        <p className="text-xs font-bold text-indigo-600 dark:text-indigo-400 text-center">{planningMetrics.progressPerc.toFixed(1)}% da jornada concluída</p>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div>
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Faturamento Restante</p>
-                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.revenueRemaining.toFixed(0)}</p>
+                      <div className="space-y-4 mb-6">
+                        <div className="p-4 bg-white/50 dark:bg-black/20 rounded-2xl border border-indigo-50 dark:border-indigo-900/30">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase mb-1">Status de Faturamento</p>
+                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100 leading-tight">
+                            Ainda faltam <span className="text-indigo-600">R$ {planningMetrics.revenueRemaining.toFixed(2)}</span> para bater a meta total.
+                          </p>
                         </div>
-                        <div>
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Restante</p>
-                          <p className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
+
+                        <div className="p-4 bg-white/50 dark:bg-black/20 rounded-2xl border border-indigo-50 dark:border-indigo-900/30">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase mb-1">Esforço Estimado</p>
+                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100 leading-tight">
+                            Você ainda precisa rodar <span className="text-indigo-600">~{planningMetrics.totalHoursRemaining.toFixed(0)} horas</span> para bater a meta.
+                          </p>
                         </div>
                       </div>
 
-                      {/* Projections Section */}
-                      <div className="grid grid-cols-2 gap-3 py-3 border-y border-indigo-100 dark:border-indigo-800/50 mb-4">
-                        <div className="flex items-center gap-2">
-                          <div className="bg-indigo-100 dark:bg-indigo-900/40 p-1.5 rounded-lg text-indigo-600">
-                            <Clock size={12} />
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase">Esforço Diário</p>
-                            <p className="text-xs font-black dark:text-white">~{planningMetrics.hoursPerDay.toFixed(1)}h/dia</p>
-                          </div>
+                      <div className="grid grid-cols-2 gap-4 mb-6">
+                        <div className="flex flex-col">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária</p>
+                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <div className="bg-indigo-100 dark:bg-indigo-900/40 p-1.5 rounded-lg text-indigo-600">
-                            <Navigation size={12} />
-                          </div>
-                          <div>
-                            <p className="text-[9px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase">Rodagem Diária</p>
-                            <p className="text-xs font-black dark:text-white">~{planningMetrics.kmPerDay.toFixed(0)}km/dia</p>
-                          </div>
+                        <div className="flex flex-col">
+                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Horas/Dia</p>
+                          <p className="text-xl font-black text-indigo-900 dark:text-indigo-100">{planningMetrics.hoursPerDay.toFixed(1)}h</p>
                         </div>
                       </div>
-                    </div>
-                    
-                    <div className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-medium">
-                      <p>Média de ganhos: <span className="font-bold">R$ {planningMetrics.avgRph.toFixed(0)}/h</span> e <span className="font-bold">R$ {planningMetrics.avgRpkm.toFixed(2)}/km</span></p>
-                      <p className="mt-1">Meta de Lucro: <span className="font-bold text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.monthlyNetGoal}</span> • Restam <span className="font-bold">{planningMetrics.daysRemaining}</span> dias.</p>
+
+                      <div className="pt-4 border-t border-indigo-100 dark:border-indigo-800/50 space-y-4">
+                        <div className="flex justify-between items-center text-[11px] text-indigo-600/80 dark:text-indigo-400/80 font-medium">
+                           <p title="Quanto você quer que sobre">Lucro: <span className="font-bold">R$ {planningMetrics.monthlyNetGoal}</span></p>
+                           <p title="Total de gastos fixos ativos">Contas: <span className="font-bold">R$ {planningMetrics.totalFixed}</span></p>
+                           <p title="Calculado com base na sua rodagem média">Fuel: <span className="font-bold">~R$ {planningMetrics.estimatedFuelCostRemaining.toFixed(0)}</span></p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-3">
+                          <div className="flex-1 text-[10px] text-indigo-500/70 font-bold uppercase bg-indigo-50/50 dark:bg-indigo-950/30 p-2 rounded-lg text-center">
+                            Média: R$ {planningMetrics.avgRph.toFixed(0)}/h • R$ {planningMetrics.avgRpkm.toFixed(2)}/km
+                          </div>
+                          <Button 
+                            onClick={generateAIPlanning} 
+                            variant="primary" 
+                            className="py-3 px-4 text-xs font-black bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20"
+                            icon={Sparkles}
+                            disabled={isGeneratingAi}
+                          >
+                            {isGeneratingAi ? 'Pensando...' : 'Plano de Eficiência IA'}
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                   </Card>
                 )}
