@@ -438,10 +438,19 @@ export default function App() {
   }, [activeShift]);
 
   const formatTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
+    const s_val = Math.max(0, seconds);
+    const h = Math.floor(s_val / 3600);
+    const m = Math.floor((s_val % 3600) / 60);
+    const s = Math.floor(s_val % 60);
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const formatTimeHuman = (seconds: number) => {
+    const s_val = Math.max(0, seconds);
+    const h = Math.floor(s_val / 3600);
+    const m = Math.floor((s_val % 3600) / 60);
+    if (h > 0) return `${h}H ${m}MIN`;
+    return `${m}MIN`;
   };
 
   const handleLogin = async () => {
@@ -2696,7 +2705,7 @@ REGRAS CRÍTICAS:
                       <p className="text-xs text-blue-800 dark:text-blue-300 font-medium leading-relaxed">
                         Faltam <span className="font-bold">R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para bater a meta de R$ {planningMetrics.dailyNeeded.toFixed(2)}. 
                         {todayMetrics.totalTime > 0 && todayMetrics.totalRevenue > 0 ? (
-                           <> Com base no seu R$/hora atual (R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h), mais <span className="font-bold">{formatTime(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span> trabalhando sua meta é atingida.</>
+                           <> Com base no seu R$/hora atual (R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h), mais <span className="font-bold">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span> trabalhando sua meta é atingida.</>
                         ) : ' Faça algumas corridas para analisarmos a precisão e tempo de término.'}
                       </p>
                     </div>
@@ -3083,7 +3092,7 @@ REGRAS CRÍTICAS:
                                             </div>
                                             {shiftTrips[shift.id].map(trip => {
                                               const mins = Math.floor(trip.durationSeconds / 60);
-                                              const secs = trip.durationSeconds % 60;
+                                              const secs = Math.floor(trip.durationSeconds % 60);
                                               const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
                                               const tripRph = trip.value / (trip.durationSeconds / 3600);
                                               
@@ -4910,7 +4919,7 @@ function TripForm({ initialData, onSubmit }: {
   const [startTime, setStartTime] = useState(initialData.startTime ? format(initialData.startTime.toDate(), "yyyy-MM-dd'T'HH:mm") : '');
   const [value, setValue] = useState(initialData.value.toString());
   const [durationMin, setDurationMin] = useState(Math.floor(initialData.durationSeconds / 60).toString());
-  const [durationSec, setDurationSec] = useState((initialData.durationSeconds % 60).toString());
+  const [durationSec, setDurationSec] = useState(Math.floor(initialData.durationSeconds % 60).toString());
   const [distance, setDistance] = useState(initialData.distanceKm.toString());
   const [isSubmitting, setIsSubmitting] = useState(false);
 
