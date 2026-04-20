@@ -3101,51 +3101,57 @@ REGRAS CRÍTICAS:
                                               const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
                                               const tripRph = trip.value / (trip.durationSeconds / 3600);
                                               
-                                              let dotColor = "bg-red-600"; // <30
-                                              if (tripRph > 40) {
-                                                dotColor = "bg-green-500";
-                                              } else if (tripRph > 35) {
-                                                dotColor = "bg-yellow-500";
+                                              let bgColorClass = "bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30"; // <30
+                                              let textColorClass = "text-red-700 dark:text-red-400";
+                                              if (tripRph >= 40) {
+                                                bgColorClass = "bg-teal-50 dark:bg-teal-900/10 border-teal-100 dark:border-teal-900/30";
+                                                textColorClass = "text-teal-700 dark:text-teal-400";
+                                              } else if (tripRph >= 35) {
+                                                bgColorClass = "bg-green-50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30";
+                                                textColorClass = "text-green-700 dark:text-green-400";
                                               } else if (tripRph >= 30) {
-                                                dotColor = "bg-orange-500";
+                                                bgColorClass = "bg-orange-50 dark:bg-orange-900/10 border-orange-100 dark:border-orange-900/30";
+                                                textColorClass = "text-orange-700 dark:text-orange-400";
                                               }
 
                                               return (
-                                                <div key={trip.id} className="flex justify-between items-center bg-white dark:bg-gray-900 px-3 py-2.5 rounded-xl text-sm border border-gray-100 dark:border-gray-800 shadow-[0_2px_4px_rgba(0,0,0,0.02)] transition-all hover:border-blue-100 dark:hover:border-blue-900 group/trip">
-                                                  <div className="flex items-center gap-1 sm:gap-3 w-full">
-                                                    <div className="flex flex-col items-center min-w-[32px]">
-                                                      <div className={cn("w-2.5 h-2.5 rounded-full mb-1", dotColor)} title={`R$ ${tripRph.toFixed(0)}/h`} />
-                                                    </div>
+                                                <div key={trip.id} className={cn("flex justify-between items-center px-3 py-2.5 rounded-xl text-sm border shadow-sm transition-all relative overflow-hidden", bgColorClass)}>
+                                                  {/* Soft background gradient overlay for styling */}
+                                                  <div className="absolute inset-0 bg-gradient-to-r from-white/40 dark:from-black/10 to-transparent pointer-events-none" />
+                                                  
+                                                  <div className="flex items-center gap-2 sm:gap-3 w-full relative z-10">
                                                     <div className="flex items-center justify-between gap-1 w-full flex-wrap sm:flex-nowrap">
-                                                       {tripHour && <span className="text-xs font-bold text-gray-500 dark:text-gray-400 tabular-nums w-10 shrink-0">{tripHour}</span>}
-                                                       <span className="font-black text-gray-900 dark:text-white text-sm shrink-0 min-w-[60px]">R$ {trip.value.toFixed(2)}</span>
-                                                       <div className="hidden sm:flex h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1"></div>
-                                                       <span className="text-xs text-gray-500 dark:text-gray-400 font-bold shrink-0 tabular-nums">
+                                                       {tripHour && <span className={cn("text-xs font-bold tabular-nums w-10 shrink-0", textColorClass)}>{tripHour}</span>}
+                                                       <span className={cn("font-black text-sm shrink-0 min-w-[60px]", textColorClass)}>R$ {trip.value.toFixed(2)}</span>
+                                                       <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
+                                                       <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-80", textColorClass)}>
                                                          {mins > 0 ? `${mins}m ` : ''}{secs}s
                                                        </span>
-                                                       <div className="hidden sm:flex h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1"></div>
-                                                       <span className="text-xs text-indigo-500 dark:text-indigo-400 font-bold shrink-0 tabular-nums">
+                                                       <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
+                                                       <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-90", textColorClass)}>
                                                          {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
                                                        </span>
                                                     </div>
                                                   </div>
-                                                  <div className="flex gap-1 opacity-0 group-hover/trip:opacity-100 transition-opacity ml-2 shrink-0">
+                                                  <div className="flex gap-1 ml-2 shrink-0 relative z-10">
                                                     <button 
-                                                      className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors"
+                                                      className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-white/50 dark:hover:bg-black/20 rounded-lg transition-colors"
                                                       onClick={(e) => {
                                                         e.stopPropagation();
                                                         setEditingTrip({ shiftId: shift.id, trip });
                                                         setShowEditTripModal(true);
                                                       }}
+                                                      title="Editar Corrida"
                                                     >
                                                       <Edit2 size={14} />
                                                     </button>
                                                     <button 
-                                                      className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                                                      className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-white/50 dark:hover:bg-black/20 rounded-lg transition-colors"
                                                       onClick={(e) => {
                                                         e.stopPropagation();
                                                         setTripToDelete({ shiftId: shift.id, tripId: trip.id });
                                                       }}
+                                                      title="Apagar Corrida"
                                                     >
                                                       <X size={14} />
                                                     </button>
