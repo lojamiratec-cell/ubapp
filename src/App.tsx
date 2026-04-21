@@ -1901,84 +1901,148 @@ REGRAS CRÍTICAS:
     }));
   }, [shifts]);
 
-  const heatmapData = useMemo(() => {
-    const days = [0, 1, 2, 3, 4, 5, 6]; // Dom to Sáb
-    const stats: { [key: string]: { revenue: number, seconds: number } } = {};
-    let minH = 23;
-    let maxH = 0;
+  const hourlyData = useMemo(() => {
+    const now = new Date();
+    let filteredShifts = shifts.filter(s => s.status === 'finished');
+    if (insightFilter === 'day') {
+      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), now));
+    } else if (insightFilter === 'week') {
+      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), now, { weekStartsOn: 1 }));
+    } else if (insightFilter === 'month') {
+      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), now));
+    }
+
+    const stats: Record<number, { revenue: number, seconds: number }> = {};
+    for (let h = 6; h <= 23; h++) {
+       stats[h] = { revenue: 0, seconds: 0 };
+    }
+
+    filteredShifts.forEach(s => {
+       const startHour = ensureDate(s.startTime).getHours();
+       const endHour = s.endTime ? ensureDate(s.endTime).getHours() : startHour;
+       const durationHours = Math.max(1, (endHour < startHour ? endHour + 24 : endHour) - startHour + 1);
+       const revenuePerHour = s.totalRevenue / durationHours;
+       const secondsPerHour = s.activeTimeSeconds / durationHours;
+
+       for(let i = 0; i < durationHours; i++) {
+          const h = (startHour + i) % 24;
+          if (h >= 6 && h <= 23) {
+             stats[h].revenue += revenuePerHour;
+             stats[h].seconds += secondsPerHour;
+          }
+       }
+    });
+
+    const data = [];
+    let best = { h: -1, val: -1 };
+    let worst = { h: -1, val: 999999 };
+    let sum = 0, count = 0;
     
-    shifts.filter(s => s.status === 'finished').forEach(s => {
-      const date = ensureDate(s.startTime);
-      const day = date.getDay();
-      const startHour = date.getHours();
-      const endHour = s.endTime ? ensureDate(s.endTime).getHours() : startHour;
-      
-      const revenue = s.totalRevenue;
-      const activeSeconds = s.activeTimeSeconds;
-      const durationHours = Math.max(1, (endHour < startHour ? endHour + 24 : endHour) - startHour + 1);
-      
-      for (let i = 0; i < durationHours; i++) {
-        const h = (startHour + i) % 24;
-        const key = `${day}-${h}`;
-        if (!stats[key]) stats[key] = { revenue: 0, seconds: 0 };
-        stats[key].revenue += revenue / durationHours;
-        stats[key].seconds += activeSeconds / durationHours;
-        if (h < minH) minH = h;
-        if (h > maxH) maxH = h;
+    for (let h = 6; h <= 23; h++) {
+       const avg = stats[h].seconds > 0 ? stats[h].revenue / (stats[h].seconds / 3600) : 0;
+       
+       if (avg > 0) {
+         sum += avg;
+         count++;
+         if (avg > best.val) best = { h, val: avg };
+         if (avg < worst.val) worst = { h, val: avg };
+       }
+       data.push({ hour: h, hrString: `${h}h`, val: avg });
+    }
+    const generalAvg = count > 0 ? sum / count : 0;
+
+    const processedData = data.map(d => ({
+       ...d,
+       color: d.val === 0 ? '#e5e7eb' : (d.val > generalAvg * 1.05 ? '#22c55e' : (d.val >= generalAvg * 0.9 ? '#eab308' : '#ef4444'))
+    }));
+
+    let insightMsg = "Estude seus horários para encontrar o melhor padrão.";
+    if (count > 0 && best.val > 0 && generalAvg > 0) {
+      if (best.h >= 17 && best.h <= 21) insightMsg = `Você ganha ${Math.max(1, (best.val/generalAvg*100 - 100)).toFixed(0)}% a mais durante à noite (${best.h}h).`;
+      else if (best.h >= 6 && best.h <= 10) insightMsg = `Sua manhã tem ótima performance! Pico de ganhos às ${best.h}h.`;
+      else insightMsg = `Seu horário mais lucrativo é às ${best.h}h (R$ ${best.val.toFixed(0)}/h), acima da sua média.`;
+    } else if (count === 0) {
+      insightMsg = "Registre turnos para obter análise de horários.";
+    }
+
+    return {
+       data: processedData,
+       best: best.val > 0 ? best : null,
+       worst: worst.val < 999999 ? worst : null,
+       generalAvg,
+       insightMsg
+    };
+
+  }, [shifts, insightFilter]);
+
+  const consumptionTrendConfig = useMemo(() => {
+    const now = new Date();
+    const daysWindow = insightFilter === 'month' ? 30 : 7;
+    const startDate = subDays(startOfDay(now), daysWindow - 1);
+    
+    const recentShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= startDate);
+    const byDate: Record<string, { km: number, l: number }> = {};
+    const resultArr: { date: string, kmL: number, millis: number }[] = [];
+    
+    recentShifts.forEach(s => {
+       const stDate = ensureDate(s.startTime);
+       const dStr = format(stDate, 'dd/MM');
+       const wKm = s.totalWorkKm || ((s.endKm || 0) - s.startKm) || 0;
+       const cons = s.avgConsumption || settings?.avgConsumption || 12;
+       const liters = wKm / cons;
+       
+       if (!byDate[dStr]) byDate[dStr] = { km: 0, l: 0 };
+       byDate[dStr].km += wKm;
+       byDate[dStr].l += liters;
+    });
+
+    let best = { date: '', val: -1 };
+    let worst = { date: '', val: 999999 };
+    
+    let validDaysCount = 0;
+    
+    // Sort keys logically by Date
+    Object.keys(byDate).forEach(dStr => {
+      const [dz, mz] = dStr.split('/');
+      // Assumption: current year logic for sorting close dates is enough
+      const tmpDate = new Date();
+      tmpDate.setMonth(parseInt(mz) - 1, parseInt(dz));
+      const stat = byDate[dStr];
+      if (stat.km > 1 && stat.l > 0) { 
+        const kmL = stat.km / stat.l;
+        resultArr.push({ date: dStr, kmL, millis: tmpDate.getTime() });
+        validDaysCount++;
+        if (kmL > best.val) best = { date: dStr, val: kmL };
+        if (kmL < worst.val) worst = { date: dStr, val: kmL };
       }
     });
 
-    // Provide some padding or default bounds if too narrow
-    if (minH > maxH) { minH = 5; maxH = 22; }
-    else {
-      minH = Math.max(0, minH - 1);
-      maxH = Math.min(23, maxH + 1);
-    }
+    const finalData = resultArr.sort((a,b) => a.millis - b.millis).map(d => ({ date: d.date, kmL: d.kmL }));
 
-    const result: { day: number, hour: number, avgPerHour: number }[] = [];
-    for (let d = 0; d < 7; d++) {
-      for (let h = minH; h <= maxH; h++) {
-        const key = `${d}-${h}`;
-        result.push({
-          day: d,
-          hour: h,
-          avgPerHour: stats[key] && stats[key].seconds > 0 ? stats[key].revenue / (stats[key].seconds / 3600) : 0
-        });
+    const generalAvg = validDaysCount > 0 ? finalData.reduce((acc, curr) => acc + curr.kmL, 0) / validDaysCount : (settings?.avgConsumption || 12);
+    const lastDayVal = validDaysCount > 0 ? finalData[finalData.length - 1].kmL : generalAvg;
+    const diffToAvg = generalAvg > 0 ? ((lastDayVal - generalAvg) / generalAvg) * 100 : 0;
+    
+    let insightMsg = "Registre corridas para avaliar suas médias recentes.";
+    if (validDaysCount > 1) {
+      if (diffToAvg > 5) insightMsg = `⬆️ +${diffToAvg.toFixed(1)}% eficiência recente. Associado a corridas longas ou melhora do trânsito.`;
+      else if (diffToAvg < -5) insightMsg = `⚠️ Redução de ${Math.abs(diffToAvg).toFixed(1)}% no consumo recente. Verifique trafêgo intenso.`;
+      else insightMsg = `✔️ Eficiência estabilizada perto de ${generalAvg.toFixed(1)} km/L.`;
+      
+      if (best.date) {
+        insightMsg += ` Melhor dia: ${best.date}.`;
       }
     }
-    return { data: result, minH, maxH };
-  }, [shifts]);
 
-  const fuelTrends = useMemo(() => {
-    const sortedFuel = [...fuelRecords].sort((a, b) => ensureDate(a.date).getTime() - ensureDate(b.date).getTime());
-    if (sortedFuel.length < 2) return null;
-    
-    const consumptionHistory: { date: string, kmL: number }[] = [];
-    
-    for (let i = 1; i < sortedFuel.length; i++) {
-      const current = sortedFuel[i];
-      const prev = sortedFuel[i-1];
-      const dist = current.km - prev.km;
-      if (dist > 0 && current.liters > 0) {
-        consumptionHistory.push({
-          date: format(ensureDate(current.date), 'dd/MM'),
-          kmL: dist / current.liters
-        });
-      }
-    }
-    
-    const recent = consumptionHistory.slice(-5);
-    const avgRecent = recent.length > 0 ? recent.reduce((acc, val) => acc + val.kmL, 0) / recent.length : 0;
-    const baseline = settings?.avgConsumption || 12;
-    const diff = baseline > 0 ? ((avgRecent - baseline) / baseline) * 100 : 0;
-    
     return {
-      history: consumptionHistory,
-      avgRecent,
-      diff,
-      status: diff < -5 ? 'bad' : diff > 5 ? 'good' : 'stable'
+       data: finalData,
+       generalAvg,
+       diffToAvg,
+       bestDate: best.date,
+       worstDate: worst.date,
+       insightMsg
     };
-  }, [fuelRecords, settings]);
+  }, [shifts, insightFilter, settings]);
 
   const tripProfile = useMemo(() => {
     const profile = {
@@ -2299,6 +2363,10 @@ REGRAS CRÍTICAS:
     const hoursPerDay = dailyNeeded / avgRph;
     const kmPerDay = dailyNeeded / avgRpkm;
     
+    // Avg 30 days consumption
+    const totalLiters30 = last30Fuel.reduce((acc, f) => acc + (Number(f.liters) || 0), 0);
+    const avgConsumption = totalKm30 > 0 && totalLiters30 > 0 ? totalKm30 / totalLiters30 : 0;
+
     const totalHoursRemaining = revenueRemaining / avgRph;
     const estimatedFuelCostRemaining = revenueRemaining * safeFuelRatio;
 
@@ -2318,6 +2386,7 @@ REGRAS CRÍTICAS:
       daysRemaining,
       avgRph,
       avgRpkm,
+      avgConsumption,
       totalHoursRemaining,
       estimatedFuelCostRemaining,
       safeFuelRatio,
@@ -3222,92 +3291,92 @@ REGRAS CRÍTICAS:
                 </div>
 
                 {planningMetrics && (
-                  <Card className="bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950/20 dark:to-gray-900 border-indigo-100 dark:border-indigo-800 shadow-xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-5">
-                      <Target size={120} />
-                    </div>
-                    
-                    <div className="relative z-10">
-                      <div className="flex justify-between items-start mb-6">
-                        <div>
-                          <h3 className="text-xs font-black text-indigo-600 dark:text-indigo-400 uppercase tracking-widest">Resumo do Mês</h3>
-                          <p className="text-lg font-bold text-indigo-900 dark:text-indigo-100 italic">
-                            Faltam {planningMetrics.daysRemaining} dias úteis
-                          </p>
-                        </div>
-                        <button 
-                          onClick={() => setShowMonthlyGoalModal(true)}
-                          className="p-2 bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400 rounded-xl hover:scale-110 transition-transform"
-                          title="Editar Meta de Lucro"
-                        >
-                          <Edit2 size={16} />
-                        </button>
+                  <Card className="bg-white dark:bg-gray-900 border-indigo-100 dark:border-indigo-900/50 shadow-2xl relative overflow-hidden p-0 border-0">
+                    <div className="bg-gradient-to-br from-indigo-600 to-violet-700 p-6 text-white relative">
+                      <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
+                        <Target size={100} />
                       </div>
-
-                      <div className="p-4 bg-indigo-600 text-white rounded-2xl shadow-lg shadow-indigo-600/30 mb-6">
-                        <p className="text-[10px] text-white/70 font-bold uppercase mb-1">Faturamento Bruto Necessário</p>
-                        <div className="flex items-baseline gap-2">
-                           <p className="text-3xl font-black leading-tight">R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</p>
-                        </div>
-                        <p className="text-xs mt-2 text-indigo-100">Falta faturar <span className="font-bold text-white">R$ {planningMetrics.revenueRemaining.toFixed(2)}</span> p/ fechar.</p>
-                      </div>
-
-                      {/* Progress Bar */}
-                      <div className="mb-6 space-y-2">
-                        <div className="flex justify-between text-[11px] font-black text-indigo-900/60 dark:text-indigo-100/60 uppercase tracking-tighter">
-                          <span>R$ {planningMetrics.revenueSoFar.toFixed(0)} feitos</span>
-                          <span>{planningMetrics.progressPerc.toFixed(1)}%</span>
-                        </div>
-                        <div className="h-4 bg-indigo-200/40 dark:bg-indigo-950/50 rounded-full overflow-hidden border border-indigo-200/30 p-0.5">
-                          <motion.div 
-                            initial={{ width: 0 }}
-                            animate={{ width: `${planningMetrics.progressPerc}%` }}
-                            className="h-full bg-indigo-600 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.4)]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-3 mb-6">
-                        <div className="p-3 bg-white/60 dark:bg-black/20 rounded-xl border border-indigo-50 dark:border-indigo-900/30 flex flex-col justify-center">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Meta Diária Inteligente</p>
-                          <p className="text-lg font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
-                        </div>
-                        <div className="p-3 bg-white/60 dark:bg-black/20 rounded-xl border border-indigo-50 dark:border-indigo-900/30 flex flex-col justify-center">
-                          <p className="text-[10px] text-indigo-600/60 dark:text-indigo-400/60 font-bold uppercase tracking-tight">Total Horas Restantes</p>
-                          <p className="text-lg font-black text-indigo-900 dark:text-indigo-100">~{planningMetrics.totalHoursRemaining.toFixed(0)}h</p>
-                        </div>
-                      </div>
-
-                      <div className="pt-4 border-t border-indigo-100 dark:border-indigo-800/50 space-y-4">
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                           <div className="bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 p-2 rounded-lg">
-                             <p className="text-[9px] uppercase font-bold opacity-70">Meta de Lucro Líquido</p>
-                             <p className="font-black text-sm">R$ {planningMetrics.monthlyNetGoal}</p>
-                           </div>
-                           <div 
-                             onClick={() => setShowExpensesDetailsModal(true)}
-                             className="bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 p-2 rounded-lg cursor-pointer hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
-                           >
-                             <p className="text-[9px] uppercase font-bold opacity-70 flex items-center justify-between">
-                               Est. Despesas/Comb. <ChevronRight size={10} />
-                             </p>
-                             <p className="font-black text-sm">R$ {(planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(0)}</p>
-                           </div>
-                        </div>
-
-                        <div className="flex flex-col sm:flex-row gap-3">
-                          <div className="flex-1 text-[10px] text-indigo-500/70 font-bold uppercase bg-indigo-50/50 dark:bg-indigo-950/30 p-2 rounded-lg text-center flex items-center justify-center">
-                            Sua Média: R$ {planningMetrics.avgRph.toFixed(0)}/h
+                      <div className="relative z-10">
+                        <div className="flex justify-between items-center mb-6">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-100/70 mb-0.5">Objetivo do Mês</p>
+                            <h3 className="text-xl font-bold italic">R$ {planningMetrics.monthlyNetGoal} <span className="text-xs font-medium not-italic opacity-70">de Lucro</span></h3>
                           </div>
-                          <Button 
-                            onClick={generateAIPlanning} 
-                            variant="primary" 
-                            className="py-3 px-4 text-xs font-black bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/20"
-                            icon={Sparkles}
-                            disabled={isGeneratingAi}
+                          <button 
+                            onClick={() => setShowMonthlyGoalModal(true)}
+                            className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition-all backdrop-blur-sm"
+                            title="Editar Meta"
                           >
-                            {isGeneratingAi ? 'Pensando...' : 'Plano de Eficiência IA'}
-                          </Button>
+                            <Edit2 size={18} />
+                          </button>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-end">
+                            <div className="space-y-1">
+                              <p className="text-[10px] font-semibold uppercase text-indigo-100/70">Já acumulado no bolso</p>
+                              <p className="text-lg font-bold">R$ {(planningMetrics.revenueSoFar * (1 - planningMetrics.safeFuelRatio)).toFixed(0)} <span className="text-[10px] font-medium opacity-60 ml-0.5">(est.)</span></p>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-xl font-black tabular-nums">{planningMetrics.progressPerc.toFixed(0)}%</span>
+                            </div>
+                          </div>
+                          <div className="h-2.5 bg-black/20 rounded-full overflow-hidden border border-white/10 p-0.5">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${planningMetrics.progressPerc}%` }}
+                              className="h-full bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                            />
+                          </div>
+                          <div className="flex justify-between text-[10px] font-semibold text-indigo-100/70">
+                             <span>R$ 0</span>
+                             <span className="text-right">Total Necessário Bruto: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="p-4 bg-indigo-50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/30 relative overflow-hidden group">
+                          <div className="absolute -right-2 -top-2 opacity-5 group-hover:scale-110 transition-transform">
+                            <TrendingUp size={36} />
+                          </div>
+                          <p className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider mb-1">Próxima Meta Diária</p>
+                          <p className="text-xl font-bold text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
+                          <p className="text-[10px] text-indigo-500/70 mt-1 font-medium">{planningMetrics.daysRemaining} dias úteis restantes</p>
+                        </div>
+                        <div className="p-4 bg-violet-50 dark:bg-violet-950/30 rounded-2xl border border-violet-100 dark:border-violet-900/30 relative overflow-hidden group">
+                          <div className="absolute -right-2 -top-2 opacity-5 group-hover:scale-110 transition-transform">
+                            <Clock size={36} />
+                          </div>
+                          <p className="text-[10px] text-violet-500 font-bold uppercase tracking-wider mb-1">Esforço p/ bater meta</p>
+                          <p className="text-xl font-bold text-violet-900 dark:text-violet-100">~{planningMetrics.totalHoursRemaining.toFixed(0)}h</p>
+                          <p className="text-[10px] text-violet-500/70 mt-1 font-medium">Sua média: R$ {planningMetrics.avgRph.toFixed(0)}/h</p>
+                        </div>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-xl border border-gray-100 dark:border-gray-800/50">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
+                            <Activity size={16} className="text-indigo-600" />
+                          </div>
+                          <p className="text-xs font-bold text-gray-800 dark:text-gray-200">Como calculamos isso?</p>
+                        </div>
+                        <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
+                          Para levar <span className="font-bold text-indigo-600 dark:text-indigo-400">R$ {planningMetrics.monthlyNetGoal}</span> limpo pro bolso, você precisa buscar faturar <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span> (bruto), já descontando os <span className="font-bold text-red-500/80">R$ {(planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(0)}</span> previstos em custos.
+                        </p>
+                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700/50 flex flex-col sm:flex-row gap-3">
+                           <div className="flex gap-2 w-full">
+                              <span className="flex-1 px-2 py-1.5 bg-indigo-100/50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-lg text-[10px] font-bold text-center border border-indigo-100 dark:border-indigo-800">KM: R$ {planningMetrics.avgRpkm.toFixed(2)}</span>
+                              <span className="flex-1 px-2 py-1.5 bg-violet-100/50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 rounded-lg text-[10px] font-bold text-center border border-violet-100 dark:border-violet-800">Consumo: {planningMetrics.avgConsumption > 0 ? planningMetrics.avgConsumption.toFixed(1) : settings?.avgConsumption || 12} km/L</span>
+                           </div>
+                           <Button 
+                             onClick={generateAIPlanning} 
+                             variant="primary" 
+                             className="w-full sm:w-auto py-2 px-4 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-500/20 rounded-xl"
+                             icon={Sparkles}
+                             disabled={isGeneratingAi}
+                           >
+                             {isGeneratingAi ? 'Analisando...' : 'Obter Plano IA'}
+                           </Button>
                         </div>
                       </div>
                     </div>
@@ -3347,34 +3416,37 @@ REGRAS CRÍTICAS:
                       const isPaid = fe.lastPaidMonth === currentMonthStr;
 
                       return (
-                        <Card key={fe.id} className={cn("flex flex-col sm:flex-row justify-between items-start sm:items-center group relative overflow-hidden gap-4", isPaid && "opacity-50 grayscale")}>
+                        <Card key={fe.id} className={cn("flex flex-col justify-between items-start group relative overflow-hidden gap-3 p-4", isPaid && "opacity-50 grayscale")}>
                           {daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid && (
-                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />
+                            <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500 shadow-[1px_0_5px_rgba(239,68,68,0.3)]" />
                           )}
-                          <div className="flex items-center gap-4">
-                            <div className={cn("p-3 rounded-2xl transition-colors", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "bg-red-50 text-red-500 dark:bg-red-900/20 dark:text-red-400" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400")}>
-                               <CalendarIcon size={20} />
+                          <div className="flex items-center gap-3 w-full">
+                            <div className={cn("p-2.5 rounded-xl transition-all shadow-sm", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400" : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400")}>
+                               <CalendarIcon size={18} />
                             </div>
-                            <div>
-                               <p className="font-bold text-gray-900 dark:text-white leading-tight">{fe.name}</p>
-                               <p className={cn("text-xs font-medium", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "text-red-500" : "text-gray-500")}>
-                                 {isPaid ? 'Pago este mês' : `Vence dia ${fe.dueDay} (em ${daysUntilDue} dias)`}
+                            <div className="flex-1">
+                               <p className="font-bold text-base text-gray-900 dark:text-white leading-tight mb-0.5">{fe.name}</p>
+                               <p className={cn("text-xs font-medium", daysUntilDue <= 3 && daysUntilDue >= 0 && !isPaid ? "text-red-600" : "text-gray-500 dark:text-gray-400")}>
+                                 {isPaid ? 'Pago este mês ✔️' : `Vence dia ${fe.dueDay} (em ${daysUntilDue} dias)`}
                                </p>
                             </div>
                           </div>
-                          <div className="flex items-center justify-between w-full sm:w-auto gap-4">
-                            <p className="font-bold text-lg dark:text-white">R$ {fe.amount.toFixed(2)}</p>
+                          <div className="flex items-center justify-between w-full pt-3 border-t border-gray-100 dark:border-gray-800/50">
+                            <div>
+                               <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-0.5">Valor da Conta</p>
+                               <p className="font-bold text-lg dark:text-white tracking-tight">R$ {fe.amount.toFixed(2)}</p>
+                            </div>
                             <div className="flex items-center gap-2">
                               {!isPaid && (
                                 <button
                                   onClick={() => payFixedExpense(fe)}
-                                  className="px-3 py-1.5 bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 rounded-lg text-xs font-bold transition-all hover:bg-green-200 dark:hover:bg-green-900/50"
+                                  className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-bold transition-all hover:bg-green-700 active:scale-95 shadow-md shadow-green-500/20"
                                 >
                                   Pagar
                                 </button>
                               )}
                               <button 
-                                className="p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                                className="p-2 text-gray-400 hover:text-blue-500 bg-gray-50 dark:bg-gray-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all border border-gray-100 dark:border-gray-700/50"
                                 onClick={() => {
                                   setEditingFixedExpense(fe);
                                   setShowFixedExpenseModal(true);
@@ -3401,19 +3473,19 @@ REGRAS CRÍTICAS:
                 ) : (
                   <div className="space-y-3">
                     {withdrawals.slice(0, 5).map(w => (
-                      <Card key={w.id} className="flex justify-between items-center">
+                      <Card key={w.id} className="flex justify-between items-center p-4">
                         <div className="flex items-center gap-3">
-                           <div className="bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400 p-2 rounded-xl">
+                           <div className="bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400 p-2 rounded-xl shadow-sm border border-green-100 dark:border-green-900/30">
                               <ArrowUpRight size={18} />
                            </div>
                            <div>
-                             <p className="font-bold text-gray-900 dark:text-white leading-tight">Transferência</p>
-                             <p className="text-xs text-gray-500">{format(w.date.toDate(), 'dd/MM/yyyy HH:mm')}</p>
+                             <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">Transferência</p>
+                             <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mt-0.5">{format(w.date.toDate(), 'dd/MM/yyyy • HH:mm')}</p>
                            </div>
                         </div>
                         <div className="text-right">
-                           <p className="font-bold text-gray-900 dark:text-white">R$ {w.amount.toFixed(2)}</p>
-                           {w.fee > 0 && <p className="text-[10px] text-red-500">Taxa: R$ {w.fee.toFixed(2)}</p>}
+                           <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {w.amount.toFixed(2)}</p>
+                           {w.fee > 0 && <p className="text-[10px] font-bold text-red-500 mt-0.5">Taxa: R$ {w.fee.toFixed(2)}</p>}
                         </div>
                       </Card>
                     ))}
@@ -3430,27 +3502,33 @@ REGRAS CRÍTICAS:
                     return (
                       <Card 
                         key={fuel.id} 
-                        className="border-l-4 border-l-blue-500 group cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                        className="bg-white dark:bg-gray-900 border-l-[4px] border-l-blue-500 p-4 group cursor-pointer hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all border border-gray-100 dark:border-gray-800"
                         onClick={() => {
                           setEditingFuel(fuel);
                           setShowEditFuelModal(true);
                         }}
                       >
                         <div className="flex justify-between items-center">
-                          <div>
-                            <p className="font-bold text-gray-900 dark:text-white">R$ {fuel.totalValue.toFixed(2)}</p>
-                            <p className="text-xs text-gray-400 dark:text-gray-500">
-                              {format(fuel.date?.toDate() || new Date(), 'dd/MM HH:mm')} • {fuel.liters.toFixed(2)}L @ R${fuel.pricePerLiter.toFixed(2)}
+                          <div className="space-y-1">
+                            <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {fuel.totalValue.toFixed(2)}</p>
+                            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 flex flex-wrap gap-1.5">
+                              <span>{format(fuel.date?.toDate() || new Date(), 'dd/MM HH:mm')}</span>
+                              <span className="opacity-30">•</span>
+                              <span>{fuel.liters.toFixed(2)}L</span>
+                              <span className="opacity-30">•</span>
+                              <span className="text-blue-600 dark:text-blue-400">R${fuel.pricePerLiter.toFixed(2)}/L</span>
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="text-right">
                               <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fuel.km} km</p>
                               {kmDriven > 0 && (
-                                <p className="text-[10px] text-green-600 dark:text-green-400 font-bold">{kmDriven} km rodados</p>
+                                <p className="text-[10px] text-green-600 dark:text-green-500 font-bold mt-0.5">{kmDriven} km rod.</p>
                               )}
                             </div>
-                            <ChevronRight size={16} className="text-gray-300 dark:text-gray-700 group-hover:text-blue-500 transition-colors" />
+                            <div className="p-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg group-hover:bg-blue-100 dark:group-hover:bg-blue-900/40 transition-colors">
+                              <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
+                            </div>
                           </div>
                         </div>
                       </Card>
@@ -3469,26 +3547,30 @@ REGRAS CRÍTICAS:
                 expenses.map(expense => (
                   <Card 
                     key={expense.id} 
-                    className="flex justify-between items-center group cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+                    className="flex justify-between items-center p-4 group cursor-pointer hover:bg-red-50/30 dark:hover:bg-red-900/10 transition-all border border-gray-100 dark:border-gray-800"
                     onClick={() => {
                       setEditingExpense(expense);
                       setShowEditExpenseModal(true);
                     }}
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-2xl text-red-500 dark:text-red-400 transition-colors">
-                        <AlertCircle size={20} />
+                    <div className="flex items-center gap-3">
+                      <div className="bg-red-50 dark:bg-red-900/30 p-2.5 rounded-xl text-red-500 dark:text-red-400 border border-red-100 dark:border-red-900/30 shadow-sm transition-all">
+                        <AlertCircle size={18} />
                       </div>
                       <div>
-                        <p className="font-bold text-gray-900 dark:text-white">{expense.category}</p>
-                        <p className="text-xs text-gray-400 dark:text-gray-500 font-medium">
-                          {format(expense.date?.toDate() || new Date(), 'dd/MM/yyyy')} • {expense.kmAtExpense} km
+                        <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">{expense.category}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5">
+                          {format(expense.date?.toDate() || new Date(), 'dd/MM/yyyy')} • <span className="text-red-500/80">{expense.kmAtExpense} km</span>
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <p className="font-bold text-red-500 dark:text-red-400">- R$ {expense.value.toFixed(2)}</p>
-                      <ChevronRight size={16} className="text-gray-300 dark:text-gray-700 group-hover:text-red-500 transition-colors" />
+                      <div className="text-right">
+                        <p className="font-bold text-base text-red-500 dark:text-red-400 tracking-tight">- R$ {expense.value.toFixed(2)}</p>
+                      </div>
+                      <div className="p-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg group-hover:bg-red-100 dark:group-hover:bg-red-900/40 transition-colors">
+                        <ChevronRight size={16} className="text-gray-400 group-hover:text-red-500 transition-colors" />
+                      </div>
                     </div>
                   </Card>
                 ))
@@ -3530,25 +3612,25 @@ REGRAS CRÍTICAS:
                 <>
                   {/* Resumo do Período */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 transition-colors">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">Faturamento</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">R$ {metrics.totalRevenue.toFixed(2)}</p>
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">Faturamento</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">R$ {metrics.totalRevenue.toFixed(2)}</p>
                     </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 transition-colors">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">KM Trabalho</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">{metrics.totalKmWork.toFixed(1)} km</p>
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">KM Trabalho</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalKmWork.toFixed(1)} km</p>
                     </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 transition-colors">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">KM Pessoal</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">{metrics.totalKmPersonal.toFixed(1)} km</p>
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">KM Pessoal</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalKmPersonal.toFixed(1)} km</p>
                     </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 transition-colors">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1">Tempo Total</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">{metrics.totalHours.toFixed(1)}h</p>
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">Tempo Total</p>
+                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalHours.toFixed(1)}h</p>
                     </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-2xl border border-gray-100 dark:border-gray-800 sm:col-span-2 transition-colors">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 text-center">Total de Viagens</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white text-center">{metrics.totalTrips}</p>
+                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 sm:col-span-2 transition-colors shadow-sm">
+                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest text-center">Total de Viagens</p>
+                      <p className="text-xl font-bold text-gray-900 dark:text-white text-center font-mono tracking-tighter">{metrics.totalTrips}</p>
                     </div>
                   </div>
 
@@ -3556,7 +3638,7 @@ REGRAS CRÍTICAS:
                   <div className="space-y-3">
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Métricas Principais</h3>
                     
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
@@ -3565,19 +3647,19 @@ REGRAS CRÍTICAS:
                           <Clock size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase">R$ / Hora</p>
-                          <p className="font-bold text-lg dark:text-white">R$ {metrics.revenuePerHour.toFixed(2)}/h</p>
+                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / Hora</p>
+                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.revenuePerHour.toFixed(2)}/h</p>
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
+                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
                         metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerHour >= 35 ? "Excelente" : metrics.revenuePerHour >= 25 ? "Bom" : "Baixo"}
                       </div>
                     </Card>
 
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
@@ -3586,19 +3668,19 @@ REGRAS CRÍTICAS:
                           <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase">R$ / KM</p>
-                          <p className="font-bold text-lg dark:text-white">R$ {metrics.revenuePerKm.toFixed(2)}/km</p>
+                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / KM</p>
+                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.revenuePerKm.toFixed(2)}/km</p>
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
+                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
                         metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerKm >= 2.5 ? "Excelente" : metrics.revenuePerKm >= 1.8 ? "Bom" : "Baixo"}
                       </div>
                     </Card>
 
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 gap-4 sm:gap-0">
+                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
@@ -3607,12 +3689,12 @@ REGRAS CRÍTICAS:
                           <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
-                          <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase">Ticket Médio</p>
-                          <p className="font-bold text-lg dark:text-white">R$ {metrics.ticketMedio.toFixed(2)}</p>
+                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Ticket Médio</p>
+                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.ticketMedio.toFixed(2)}</p>
                         </div>
                       </div>
                       <div className={cn(
-                        "px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-colors self-start sm:self-auto",
+                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
                         metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.ticketMedio >= 15 ? "Excelente" : metrics.ticketMedio >= 10 ? "Bom" : "Baixo"}
@@ -3718,17 +3800,15 @@ REGRAS CRÍTICAS:
                         <div className="relative z-10 space-y-4">
                           <div className="flex justify-between items-end">
                             <div>
-                              <p className="text-blue-100 text-xs font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
-                              <p className="text-3xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
+                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
+                              <p className="text-2xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
                             </div>
                             <div className="text-right">
-                              <div className="flex flex-col items-end">
-                                <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight">Meta</p>
-                                <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
-                                {planningMetrics && (
-                                  <span className="text-[8px] bg-white/20 px-1 rounded uppercase font-black tracking-tighter mt-0.5">Sincronizada</span>
-                                )}
-                              </div>
+                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight mb-1">Meta Semanal</p>
+                              <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
+                              {planningMetrics && (
+                                <span className="text-[8px] bg-white/20 px-1.5 py-0.5 rounded-md uppercase font-bold tracking-tighter mt-1 block">Sincronizada</span>
+                              )}
                             </div>
                           </div>
                           
@@ -3758,89 +3838,151 @@ REGRAS CRÍTICAS:
                     </div>
                   )}
 
-                  {/* Mapa de Calor de Ganhos */}
+                  {/* Resumo de Ganhos por Hora */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Mapa de Ganhos (Dia vs Hora)</h3>
-                    <Card className="p-4 overflow-x-auto">
-                      <div className="min-w-[600px]">
-                        <div className="flex mb-2">
-                          <div className="w-10 shrink-0" />
-                          {Array.from({ length: heatmapData.maxH - heatmapData.minH + 1 }).map((_, i) => (
-                            <div key={i} className="flex-1 text-[8px] font-bold text-gray-400 text-center">{heatmapData.minH + i}h</div>
-                          ))}
-                        </div>
-                        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map((dayName, d) => (
-                          <div key={d} className="flex items-center gap-1 mb-1">
-                            <div className="w-10 shrink-0 text-[10px] font-bold text-gray-400 uppercase">{dayName}</div>
-                            {Array.from({ length: heatmapData.maxH - heatmapData.minH + 1 }).map((_, i) => {
-                              const h = heatmapData.minH + i;
-                              const cell = heatmapData.data.find(cd => cd.day === d && cd.hour === h);
-                              const val = cell?.avgPerHour || 0;
-                              
-                              // Color logic
-                              let bg = 'bg-gray-50 dark:bg-gray-800/50';
-                              if (val > 45) bg = 'bg-green-600 dark:bg-green-500';
-                              else if (val > 35) bg = 'bg-green-500 dark:bg-green-600/80';
-                              else if (val > 25) bg = 'bg-blue-500 dark:bg-blue-600/80';
-                              else if (val > 15) bg = 'bg-blue-300 dark:bg-blue-800/40';
-                              else if (val > 0) bg = 'bg-blue-100 dark:bg-blue-900/20';
-                              
-                              return (
-                                <div 
-                                  key={h} 
-                                  title={`${dayName} ${h}h: R$ ${val.toFixed(2)}/h`}
-                                  className={cn("flex-1 h-6 rounded-sm transition-all hover:scale-110 cursor-help", bg)}
-                                />
-                              );
-                            })}
+                    <div className="flex items-center justify-between ml-1">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Análise de Horários (Ganhos)</h3>
+                    </div>
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                      {/* Bloco 1: Resumo Rápido */}
+                      <Card className="p-5 flex flex-col justify-center">
+                         <div className="flex items-center gap-2 mb-4">
+                           <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-xl">
+                             <Clock size={18} className="text-blue-600 dark:text-blue-400" />
+                           </div>
+                           <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Resumo de Horários</h4>
+                         </div>
+                         <div className="space-y-4">
+                           <div className="flex items-center justify-between border-l-4 border-green-500 pl-3 py-1">
+                             <div>
+                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Melhor Horário</p>
+                               <p className="text-sm font-black dark:text-gray-200">{hourlyData.best ? `${hourlyData.best.h}h - ${hourlyData.best.h + 1}h` : '--'}</p>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Média do Horário</p>
+                               <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {hourlyData.best ? hourlyData.best.val.toFixed(0) : '0'}/h</p>
+                             </div>
+                           </div>
+                           <div className="flex items-center justify-between border-l-4 border-red-500 pl-3 py-1">
+                             <div>
+                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pior Horário</p>
+                               <p className="text-sm font-black dark:text-gray-200">{hourlyData.worst ? `${hourlyData.worst.h}h - ${hourlyData.worst.h + 1}h` : '--'}</p>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Média do Horário</p>
+                               <p className="text-sm font-black text-red-500 dark:text-red-400">R$ {hourlyData.worst ? hourlyData.worst.val.toFixed(0) : '0'}/h</p>
+                             </div>
+                           </div>
+                         </div>
+                      </Card>
+                      
+                      {/* Bloco 2: Gráfico de Barras e Contexto */}
+                      <Card className="p-5 lg:col-span-2">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                          <div>
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Evolução por Hora (R$/h)</p>
+                            <p className="text-xs font-bold text-gray-500">{hourlyData.insightMsg}</p>
                           </div>
-                        ))}
-                        <div className="mt-4 flex items-center justify-center gap-4 text-[10px] font-bold text-gray-400 uppercase">
-                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-gray-100 dark:bg-gray-800" /> Sem dados</div>
-                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-blue-100 dark:bg-blue-900/40" /> Baixo</div>
-                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-blue-500" /> Bom</div>
-                          <div className="flex items-center gap-1"><div className="w-3 h-3 rounded-sm bg-green-600" /> Excelente</div>
                         </div>
+                        <div className="h-[200px] w-full pt-2">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={hourlyData.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
+                              <XAxis dataKey="hrString" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} dy={10} interval="preserveStartEnd" minTickGap={10} />
+                              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={(v) => `R$${v}`} />
+                              <Tooltip cursor={{ fill: 'transparent' }} content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  const data = payload[0].payload;
+                                  return (
+                                    <div className="bg-gray-900 border border-gray-800 text-white p-3 rounded-xl shadow-xl">
+                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{data.hrString} às {data.hour+1}h</p>
+                                      <p className="text-lg font-black">R$ {data.val.toFixed(2)}<span className="text-[10px] font-medium text-gray-400">/h</span></p>
+                                      <p className={cn("text-[10px] font-bold mt-1", data.val > hourlyData.generalAvg ? "text-green-400" : "text-yellow-500")}>
+                                        {data.val > hourlyData.generalAvg ? 'Acima' : 'Abaixo'} da sua média (R$ {hourlyData.generalAvg.toFixed(0)})
+                                      </p>
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}/>
+                              <Bar dataKey="val" radius={[4, 4, 0, 0]}>
+                                {hourlyData.data.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </Card>
+                    </div>
+                  </div>
+
+                  {/* Tendência de Consumo */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Tendência de Consumo</h3>
+                    <Card className="p-5 flex flex-col gap-4">
+                      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                         <div>
+                           <div className="flex items-center gap-2 mb-2">
+                             <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
+                               <Activity size={18} className="text-gray-600 dark:text-gray-400" />
+                             </div>
+                             <h4 className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Eficácia Recente</h4>
+                           </div>
+                           <p className="text-2xl font-black dark:text-white">{consumptionTrendConfig.generalAvg.toFixed(1)} <span className="text-xs font-bold text-gray-400">KM/L (Média)</span></p>
+                           <p className="text-xs font-bold mt-1 text-gray-500">{consumptionTrendConfig.insightMsg}</p>
+                         </div>
                       </div>
+
+                      {consumptionTrendConfig.data.length > 1 ? (
+                        <div className="h-[200px] w-full mt-4">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={consumptionTrendConfig.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
+                              <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} dy={10} minTickGap={10} />
+                              <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={(v) => v.toFixed(1)} />
+                              <Tooltip cursor={{ stroke: '#4B5563', strokeWidth: 1, strokeDasharray: '3 3' }} content={({ active, payload }) => {
+                                if (active && payload && payload.length) {
+                                  const data = payload[0].payload;
+                                  const isBest = data.date === consumptionTrendConfig.bestDate;
+                                  const isWorst = data.date === consumptionTrendConfig.worstDate;
+                                  return (
+                                    <div className="bg-gray-900 border border-gray-800 text-white p-3 rounded-xl shadow-xl">
+                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{data.date}</p>
+                                      <p className="text-lg font-black text-blue-400">{data.kmL.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
+                                      {(isBest || isWorst) && (
+                                         <p className={cn("text-[10px] font-bold mt-1", isBest ? "text-green-400" : "text-red-400")}>
+                                           {isBest ? '⭐ Melhor Consumo' : '⚠️ Pior Consumo'}
+                                         </p>
+                                      )}
+                                    </div>
+                                  );
+                                }
+                                return null;
+                              }}/>
+                              <Line type="monotone" dataKey={() => consumptionTrendConfig.generalAvg} stroke="#9CA3AF" strokeDasharray="3 3" strokeWidth={1} dot={false} activeDot={false} />
+                              <Line type="monotone" dataKey="kmL" stroke="#3B82F6" strokeWidth={3} dot={(props: any) => {
+                                 const { cx, cy, payload } = props;
+                                 const isBest = payload.date === consumptionTrendConfig.bestDate;
+                                 const isWorst = payload.date === consumptionTrendConfig.worstDate;
+                                 if (isBest) return <circle key={`dot-${payload.date}`} cx={cx} cy={cy} r={6} fill="#22c55e" stroke="#fff" strokeWidth={2} style={{ filter: 'drop-shadow(0 0 4px rgba(34,197,94,0.5))' }} />;
+                                 if (isWorst) return <circle key={`dot-${payload.date}`} cx={cx} cy={cy} r={5} fill="#ef4444" stroke="#fff" strokeWidth={2} />;
+                                 return <circle key={`dot-${payload.date}`} cx={cx} cy={cy} r={3} fill="#3B82F6" stroke="#fff" strokeWidth={1} />;
+                              }} activeDot={{ r: 6, fill: '#60A5FA', stroke: '#fff', strokeWidth: 2 }} />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </div>
+                      ) : (
+                        <div className="h-[200px] flex items-center justify-center bg-gray-50 dark:bg-gray-800/20 rounded-xl border border-gray-100 dark:border-gray-800/40 mt-4">
+                          <p className="text-xs font-bold text-gray-400">Dados insuficientes para gerar a tendência (mínimo de 2 dias na janela selecionada).</p>
+                        </div>
+                      )}
                     </Card>
                   </div>
 
-                  {/* Tendência de Consumo & Perfil */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Tendência de Consumo</h3>
-                      <Card className={cn(
-                        "p-5 border-l-4",
-                        fuelTrends?.status === 'bad' ? "border-l-red-500" : fuelTrends?.status === 'good' ? "border-l-green-500" : "border-l-blue-500"
-                      )}>
-                        <div className="flex justify-between items-start mb-4">
-                          <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
-                            <Activity size={18} className="text-gray-600 dark:text-gray-400" />
-                          </div>
-                          <div className={cn(
-                            "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase",
-                            fuelTrends?.status === 'bad' ? "bg-red-100 text-red-700" : fuelTrends?.status === 'good' ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"
-                          )}>
-                            {fuelTrends?.status === 'bad' ? <TrendingDown size={12} /> : <TrendingUp size={12} />}
-                            {Math.abs(fuelTrends?.diff || 0).toFixed(1)}% {fuelTrends?.status === 'bad' ? 'Pior' : 'Melhor'}
-                          </div>
-                        </div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Eficácia Recente</p>
-                        <p className="text-2xl font-black dark:text-white">{fuelTrends?.avgRecent.toFixed(1)} <span className="text-xs font-bold text-gray-400">KM/L</span></p>
-                        
-                        {fuelTrends?.status === 'bad' && (
-                          <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-100 dark:border-red-800/40">
-                            <p className="text-[10px] text-red-700 dark:text-red-400 font-bold leading-tight uppercase">
-                              ⚠️ Alerta: Consumo subiu! Verifique manutenção ou pneus.
-                            </p>
-                          </div>
-                        )}
-                      </Card>
-                    </div>
-
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Perfil de Corridas</h3>
-                      <Card className="p-5">
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Perfil de Corridas</h3>
+                    <Card className="p-5">
                         <div className="flex justify-between items-center mb-6">
                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Baseado no seu Histórico</p>
                           <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
@@ -3876,7 +4018,6 @@ REGRAS CRÍTICAS:
                         </div>
                       </Card>
                     </div>
-                  </div>
 
                   {/* Top Turnos - Ranking */}
                   <div className="space-y-4">
