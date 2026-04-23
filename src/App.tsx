@@ -2343,32 +2343,35 @@ REGRAS CRÍTICAS:
     const avgRph = totalHrs30 > 0 ? totalRev30 / totalHrs30 : 40; 
     const avgRpkm = totalKm30 > 0 ? totalRev30 / totalKm30 : 2.5;
 
-    // Fuel Estimation
-    const last30Fuel = fuelRecords.filter(f => ensureDate(f.date) >= thirtyDaysAgo);
-    const totalFuel30 = last30Fuel.reduce((acc, f) => acc + (Number(f.totalValue) || 0), 0);
-    
-    const rawFuelRatio = totalRev30 > 0 ? (totalFuel30 / totalRev30) : 0.25;
-    const safeFuelRatio = Math.min(0.5, Math.max(0.05, rawFuelRatio)); // keeps it between 5% and 50%
+    // Fuel Estimation Algorithm requested by user
+    const fuelPrice = settings.defaultFuelPrice || 5.50;
+    const avgCons = (settings.avgConsumption > 0) ? settings.avgConsumption : 12; // km/L
+    const fuelCostPerKm = fuelPrice / avgCons;
+    const estimatedFuelRatio = avgRpkm > 0 ? (fuelCostPerKm / avgRpkm) : 0.25;
+    const safeFuelRatio = Math.min(0.5, Math.max(0.05, estimatedFuelRatio)); // keeps it between 5% and 50%
     
     // Margin calculation
     const marginRatio = 1 - safeFuelRatio;
     
-    // Gross Goal = (Net + Fixed + Extra Expense) / Margem
+    // Total Revenue Goal = (Net Profit Goal + Fixed Costs + Extra Expenses) / Margin Ratio
+    // Because Revenue - FuelCost_for_that_revenue - Fixed - Extra = Net Profit
+    // R - R*ratio - Fixed - Extra = Net Profit
     const revenueNeededTotal = (monthlyNetGoal + totalFixed + totalExtraExpenses) / marginRatio;
+    
+    // Total estimated fuel cost to achieve this total revenue goal
+    const totalEstimatedFuelForGoal = revenueNeededTotal * safeFuelRatio;
+
+    // How much revenue is left to make
     const revenueRemaining = Math.max(0, revenueNeededTotal - revenueSoFar);
     
     const dailyNeeded = revenueRemaining / daysRemaining;
 
-    // Projections
-    const hoursPerDay = dailyNeeded / avgRph;
-    const kmPerDay = dailyNeeded / avgRpkm;
-    
-    // Avg 30 days consumption
-    const totalLiters30 = last30Fuel.reduce((acc, f) => acc + (Number(f.liters) || 0), 0);
-    const avgConsumption = totalKm30 > 0 && totalLiters30 > 0 ? totalKm30 / totalLiters30 : 0;
-
+    // Projections for remaining effort
     const totalHoursRemaining = revenueRemaining / avgRph;
-    const estimatedFuelCostRemaining = revenueRemaining * safeFuelRatio;
+    const totalKmRemaining = revenueRemaining / avgRpkm;
+    
+    const litersRemaining = avgCons > 0 ? totalKmRemaining / avgCons : 0;
+    const estimatedFuelCostRemaining = litersRemaining * fuelPrice;
 
     const progressPerc = Math.min(100, (revenueSoFar / revenueNeededTotal) * 100);
 
@@ -2377,20 +2380,22 @@ REGRAS CRÍTICAS:
       totalExtraExpenses,
       monthlyNetGoal,
       revenueNeededTotal,
+      totalEstimatedFuelForGoal,
       revenueSoFar,
       revenueRemaining,
       dailyNeeded,
-      hoursPerDay,
-      kmPerDay,
       progressPerc,
       daysRemaining,
       avgRph,
       avgRpkm,
-      avgConsumption,
-      totalHoursRemaining,
-      estimatedFuelCostRemaining,
+      avgConsumption: avgCons,
       safeFuelRatio,
-      workDays
+      workDays,
+      totalHoursRemaining,
+      totalKmRemaining,
+      litersRemaining,
+      estimatedFuelCostRemaining,
+      fuelPrice
     };
   }, [fixedExpenses, settings, fuelRecords, shifts, activeShift, expenses]);
 
@@ -3292,86 +3297,109 @@ REGRAS CRÍTICAS:
 
                 {planningMetrics && (
                   <Card className="bg-white dark:bg-gray-900 border-indigo-100 dark:border-indigo-900/50 shadow-2xl relative overflow-hidden p-0 border-0">
-                    <div className="bg-gradient-to-br from-indigo-600 to-violet-700 p-6 text-white relative">
+                    <div className="bg-gradient-to-br from-indigo-700 to-violet-800 p-6 text-white relative">
                       <div className="absolute top-0 right-0 p-4 opacity-10 pointer-events-none">
                         <Target size={100} />
                       </div>
                       <div className="relative z-10">
                         <div className="flex justify-between items-center mb-6">
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-100/70 mb-0.5">Objetivo do Mês</p>
-                            <h3 className="text-xl font-bold italic">R$ {planningMetrics.monthlyNetGoal} <span className="text-xs font-medium not-italic opacity-70">de Lucro</span></h3>
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-0.5">Meta Dinâmica do Mês (1)</p>
+                            <h3 className="text-3xl font-black">R$ {planningMetrics.revenueNeededTotal.toFixed(0)} <span className="text-xs font-medium opacity-70">Faturamento Bruto</span></h3>
                           </div>
                           <button 
                             onClick={() => setShowMonthlyGoalModal(true)}
                             className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl transition-all backdrop-blur-sm"
-                            title="Editar Meta"
+                            title="Editar Lucro Desejado"
                           >
                             <Edit2 size={18} />
                           </button>
                         </div>
-                        <div className="space-y-3">
+
+                        {/* Progresso de Faturamento */}
+                        <div className="space-y-3 mb-6 bg-black/10 p-4 rounded-2xl border border-white/10">
                           <div className="flex justify-between items-end">
                             <div className="space-y-1">
-                              <p className="text-[10px] font-semibold uppercase text-indigo-100/70">Já acumulado no bolso</p>
-                              <p className="text-lg font-bold">R$ {(planningMetrics.revenueSoFar * (1 - planningMetrics.safeFuelRatio)).toFixed(0)} <span className="text-[10px] font-medium opacity-60 ml-0.5">(est.)</span></p>
+                              <p className="text-[10px] font-semibold uppercase text-indigo-200">Faturado no Mês (2)</p>
+                              <p className="text-xl font-bold text-green-300">R$ {planningMetrics.revenueSoFar.toFixed(0)}</p>
                             </div>
-                            <div className="text-right">
-                              <span className="text-xl font-black tabular-nums">{planningMetrics.progressPerc.toFixed(0)}%</span>
+                            <div className="text-right space-y-1">
+                              <p className="text-[10px] font-semibold uppercase text-indigo-200">Falta para Meta (3)</p>
+                              <p className="text-xl font-bold text-yellow-300">R$ {planningMetrics.revenueRemaining.toFixed(0)}</p>
                             </div>
                           </div>
-                          <div className="h-2.5 bg-black/20 rounded-full overflow-hidden border border-white/10 p-0.5">
+                          
+                          <div className="h-3 bg-black/30 rounded-full overflow-hidden border border-white/10">
                             <motion.div 
                               initial={{ width: 0 }}
                               animate={{ width: `${planningMetrics.progressPerc}%` }}
-                              className="h-full bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,0.4)]"
+                              className="h-full bg-gradient-to-r from-green-400 to-green-300 rounded-full shadow-[0_0_15px_rgba(74,222,128,0.5)]"
                             />
-                          </div>
-                          <div className="flex justify-between text-[10px] font-semibold text-indigo-100/70">
-                             <span>R$ 0</span>
-                             <span className="text-right">Total Necessário Bruto: R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span>
                           </div>
                         </div>
                       </div>
                     </div>
-                    <div className="p-4 space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="p-4 bg-indigo-50 dark:bg-indigo-950/30 rounded-2xl border border-indigo-100 dark:border-indigo-900/30 relative overflow-hidden group">
-                          <div className="absolute -right-2 -top-2 opacity-5 group-hover:scale-110 transition-transform">
-                            <TrendingUp size={36} />
-                          </div>
-                          <p className="text-[10px] text-indigo-500 font-bold uppercase tracking-wider mb-1">Próxima Meta Diária</p>
-                          <p className="text-xl font-bold text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)}</p>
-                          <p className="text-[10px] text-indigo-500/70 mt-1 font-medium">{planningMetrics.daysRemaining} dias úteis restantes</p>
-                        </div>
-                        <div className="p-4 bg-violet-50 dark:bg-violet-950/30 rounded-2xl border border-violet-100 dark:border-violet-900/30 relative overflow-hidden group">
-                          <div className="absolute -right-2 -top-2 opacity-5 group-hover:scale-110 transition-transform">
-                            <Clock size={36} />
-                          </div>
-                          <p className="text-[10px] text-violet-500 font-bold uppercase tracking-wider mb-1">Esforço p/ bater meta</p>
-                          <p className="text-xl font-bold text-violet-900 dark:text-violet-100">~{planningMetrics.totalHoursRemaining.toFixed(0)}h</p>
-                          <p className="text-[10px] text-violet-500/70 mt-1 font-medium">Sua média: R$ {planningMetrics.avgRph.toFixed(0)}/h</p>
-                        </div>
+
+                    <div className="p-5 space-y-4">
+                      {/* Meta Diária (4) */}
+                      <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800/40 flex items-center justify-between">
+                         <div>
+                            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-1">Passo a Passo (4)</p>
+                            <h4 className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)} <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">/dia</span></h4>
+                            <p className="text-[10px] font-bold text-indigo-500/70 mt-1 uppercase">{planningMetrics.daysRemaining} {planningMetrics.daysRemaining === 1 ? 'dia útil restante' : 'dias úteis restantes'}</p>
+                         </div>
+                         <div className="h-12 w-12 rounded-xl bg-indigo-100 dark:bg-indigo-800/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                            <CalendarIcon size={24} />
+                         </div>
                       </div>
-                      <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-xl border border-gray-100 dark:border-gray-800/50">
+
+                      {/* Esforço Faltante (5) */}
+                      <div className="bg-violet-50 dark:bg-violet-900/20 p-4 rounded-2xl border border-violet-100 dark:border-violet-800/40">
+                         <div className="flex items-center gap-2 mb-4">
+                            <Clock size={16} className="text-violet-600 dark:text-violet-400" />
+                            <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest">Esforço estimado para conclusão (5)</p>
+                         </div>
+                         
+                         <div className="grid grid-cols-2 gap-3 mb-4">
+                            <div>
+                               <p className="text-lg font-black text-violet-900 dark:text-violet-100">~{planningMetrics.totalHoursRemaining.toFixed(0)} <span className="text-sm opacity-70">horas</span></p>
+                               <p className="text-[10px] font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRph.toFixed(0)}/h</p>
+                            </div>
+                            <div>
+                               <p className="text-lg font-black text-violet-900 dark:text-violet-100">~{planningMetrics.totalKmRemaining.toFixed(0)} <span className="text-sm opacity-70">km</span></p>
+                               <p className="text-[10px] font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRpkm.toFixed(2)}/km</p>
+                            </div>
+                         </div>
+                         
+                         <div className="bg-white dark:bg-gray-900 p-3 rounded-xl border border-violet-100 dark:border-violet-800/50 flex justify-between items-center">
+                            <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
+                               <FuelIcon size={14} />
+                               <span className="text-xs font-bold">Gasto com Gasolina:</span>
+                            </div>
+                            <div className="text-right">
+                               <p className="text-sm font-black text-gray-900 dark:text-white">R$ {planningMetrics.estimatedFuelCostRemaining.toFixed(0)} <span className="text-[10px] font-medium opacity-60">(~{planningMetrics.litersRemaining.toFixed(0)}L)</span></p>
+                            </div>
+                         </div>
+                      </div>
+
+                      {/* Info de Base (Desconstruindo a Meta) */}
+                      <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl border border-gray-100 dark:border-gray-700/50">
                         <div className="flex items-center gap-2 mb-3">
-                          <div className="p-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700">
-                            <Activity size={16} className="text-indigo-600" />
-                          </div>
-                          <p className="text-xs font-bold text-gray-800 dark:text-gray-200">Como calculamos isso?</p>
+                          <Activity size={14} className="text-gray-500" />
+                          <p className="text-[10px] font-black uppercase text-gray-500 tracking-wider">Como essa meta é composta?</p>
                         </div>
-                        <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed font-medium">
-                          Para levar <span className="font-bold text-indigo-600 dark:text-indigo-400">R$ {planningMetrics.monthlyNetGoal}</span> limpo pro bolso, você precisa buscar faturar <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.revenueNeededTotal.toFixed(0)}</span> (bruto), já descontando os <span className="font-bold text-red-500/80">R$ {(planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(0)}</span> previstos em custos.
-                        </p>
-                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700/50 flex flex-col sm:flex-row gap-3">
-                           <div className="flex gap-2 w-full">
-                              <span className="flex-1 px-2 py-1.5 bg-indigo-100/50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 rounded-lg text-[10px] font-bold text-center border border-indigo-100 dark:border-indigo-800">KM: R$ {planningMetrics.avgRpkm.toFixed(2)}</span>
-                              <span className="flex-1 px-2 py-1.5 bg-violet-100/50 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 rounded-lg text-[10px] font-bold text-center border border-violet-100 dark:border-violet-800">Consumo: {planningMetrics.avgConsumption > 0 ? planningMetrics.avgConsumption.toFixed(1) : settings?.avgConsumption || 12} km/L</span>
-                           </div>
+                        <ul className="space-y-2 text-[11px] text-gray-600 dark:text-gray-400 font-medium">
+                          <li className="flex justify-between"><span>💰 Lucro Desejado (Bolso):</span> <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.monthlyNetGoal.toFixed(0)}</span></li>
+                          <li className="flex justify-between"><span>📄 Custos Fixos & Contas:</span> <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.totalFixed.toFixed(0)}</span></li>
+                          <li className="flex justify-between"><span>🍔 Despesas do Mês:</span> <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.totalExtraExpenses.toFixed(0)}</span></li>
+                          <li className="flex justify-between"><span>⛽ Combustível Total (Estimado):</span> <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.totalEstimatedFuelForGoal.toFixed(0)}</span></li>
+                        </ul>
+                        
+                        <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex gap-2">
                            <Button 
                              onClick={generateAIPlanning} 
                              variant="primary" 
-                             className="w-full sm:w-auto py-2 px-4 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-500/20 rounded-xl"
+                             className="w-full py-2 px-3 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-500/20 rounded-xl"
                              icon={Sparkles}
                              disabled={isGeneratingAi}
                            >
