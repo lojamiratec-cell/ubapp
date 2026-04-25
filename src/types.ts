@@ -45,6 +45,7 @@ export interface Trip {
   timestamp: Timestamp; // Creation time
   startTime?: Timestamp; // The time the trip actually started
   dynamicValue?: number; // Surge pricing amount included in value
+  isCancelled?: boolean;
 }
 
 export interface Expense {

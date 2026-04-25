@@ -7,7 +7,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { NumericFormat } from 'react-number-format';
 import { 
   Play, Pause, Square, History, DollarSign, BarChart3, 
-  Plus, ChevronRight, ChevronLeft, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
+  Plus, Compass, ChevronRight, ChevronLeft, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon, Target, Activity,
   Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X,
   Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon, Navigation
@@ -165,7 +165,8 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'wallet' | 'insights' | 'settings'>('operation');
-  const [historyFilter, setHistoryFilter] = useState<'week' | 'month' | 'all'>('week');
+  const [historyFilter, setHistoryFilter] = useState<'week' | 'month'>('week');
+  const [historyPendingOnly, setHistoryPendingOnly] = useState(false);
   const [historyReferenceDate, setHistoryReferenceDate] = useState(new Date());
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
@@ -204,6 +205,7 @@ export default function App() {
   const [showMonthlyGoalModal, setShowMonthlyGoalModal] = useState(false);
   const [showExpensesDetailsModal, setShowExpensesDetailsModal] = useState(false);
   const [showShiftFuelModal, setShowShiftFuelModal] = useState(false);
+  const [showQuickTripModal, setShowQuickTripModal] = useState(false);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showPartialRevenueModal, setShowPartialRevenueModal] = useState(false);
   const [showPastShiftModal, setShowPastShiftModal] = useState(false);
@@ -254,6 +256,14 @@ export default function App() {
       filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), historyReferenceDate));
     }
 
+    if (historyPendingOnly) {
+      filteredShifts = filteredShifts.filter(s => {
+        const expectedTrips = s.totalTrips || 0;
+        const registeredTrips = (shiftTrips[s.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length;
+        return (expectedTrips > 0 && registeredTrips < expectedTrips) || (expectedTrips === 0 && s.totalRevenue > 0);
+      });
+    }
+
     filteredShifts.forEach(shift => {
       const date = ensureDate(shift.startTime);
       const dateKey = format(date, 'yyyy-MM-dd');
@@ -266,10 +276,9 @@ export default function App() {
       groups[dateKey].totalWorkKm += (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm));
     });
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [shifts, historyFilter, historyReferenceDate]);
+  }, [shifts, historyFilter, historyReferenceDate, historyPendingOnly, shiftTrips]);
 
   const historyRangeLabel = useMemo(() => {
-    if (historyFilter === 'all') return { type: 'Todo o Período', label: 'Todos os Turnos' };
     if (historyFilter === 'week') {
       const start = startOfWeek(historyReferenceDate, { weekStartsOn: 1 });
       const end = endOfWeek(historyReferenceDate, { weekStartsOn: 1 });
@@ -1039,13 +1048,40 @@ REGRAS CRÍTICAS:
       
       if (newKm && diffKm >= 0) {
         updates.lastKm = newKm;
-        updates.totalWorkKm = newWorkKm;
+        if (activeShift.status === 'active') {
+          updates.totalWorkKm = newWorkKm;
+        } else if (activeShift.status === 'paused') {
+          updates.totalPersonalKm = (activeShift.totalPersonalKm || 0) + Math.max(0, diffKm);
+        }
       }
       
       await updateDoc(doc(db, 'shifts', activeShift.id), updates);
       setShowPartialRevenueModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
+    }
+  };
+
+  const registerQuickTrip = async (estimatedValue: number) => {
+    if (!activeShift) return;
+    try {
+      await addDoc(collection(db, 'shifts', activeShift.id, 'trips'), {
+        userId: activeShift.userId,
+        shiftId: activeShift.id,
+        value: estimatedValue,
+        durationSeconds: 0,
+        distanceKm: 0,
+        startTime: serverTimestamp(),
+        timestamp: serverTimestamp()
+      });
+      
+      await updateDoc(doc(db, 'shifts', activeShift.id), {
+        totalTrips: increment(1),
+        totalRevenue: increment(estimatedValue)
+      });
+      setShowQuickTripModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `shifts/${activeShift.id}/trips`);
     }
   };
 
@@ -1416,7 +1452,18 @@ REGRAS CRÍTICAS:
       const updates: any = { ...data };
       
       if (data.startTime && data.endTime) {
-        updates.activeTimeSeconds = differenceInSeconds((data.endTime?.toDate() || new Date()), (data.startTime?.toDate() || new Date()));
+        const oldStartTime = existing.startTime?.toDate() || new Date();
+        const oldEndTime = existing.endTime?.toDate() || new Date();
+        const newStartTime = data.startTime instanceof Timestamp ? data.startTime.toDate() : new Date();
+        const newEndTime = data.endTime instanceof Timestamp ? data.endTime.toDate() : new Date();
+        
+        const oldTotalDuration = differenceInSeconds(oldEndTime, oldStartTime);
+        const newTotalDuration = Math.max(0, differenceInSeconds(newEndTime, newStartTime));
+        const durationDiff = newTotalDuration - oldTotalDuration;
+        
+        if (durationDiff !== 0) {
+          updates.activeTimeSeconds = newTotalDuration;
+        }
       }
       
       if (data.startKm !== undefined && data.endKm !== undefined) {
@@ -1580,32 +1627,32 @@ REGRAS CRÍTICAS:
       const filterDescription = insightFilter === 'day' ? 'Hoje' : insightFilter === 'week' ? 'Nesta Semana' : 'Neste Mês';
 
       const prompt = `
-        Atue como um Conselheiro Estratégico de Alta Performance para motoristas de aplicativo. 
+        Atue como um Cientista de Dados e Conselheiro Estratégico de Alta Performance para motoristas de app, focado em otimização agressiva de lucros (Maximizando R$/KM e R$/Hora).
         Analise os seguintes dados recentes (${filterDescription} / até 100 turnos):
         
-        RESUMO GERAL:
-        - Faturamento: R$ ${metrics.totalRevenue.toFixed(2)}
+        RESUMO GERAL DOS DADOS HISTÓRICOS:
+        - Faturamento Total: R$ ${metrics.totalRevenue.toFixed(2)}
         - KM Rodados (Trabalho): ${metrics.totalKmWork.toFixed(2)} km
-        - Tempo Total: ${metrics.totalHours.toFixed(2)} horas
+        - Tempo Total Ativo: ${metrics.totalHours.toFixed(2)} horas
         - Qtd Viagens: ${metrics.totalTrips}
         - R$/Hora Médio: R$ ${metrics.revenuePerHour.toFixed(2)}
         - Viagens/Hora: ${viagensPorHora}
         - R$/KM Médio: R$ ${metrics.revenuePerKm.toFixed(2)}
         - Ticket Médio: R$ ${metrics.ticketMedio.toFixed(2)}
         
-        DADOS DOS TURNOS RECENTES:
+        DADOS DIÁRIOS/TURNOS E CORRIDAS:
         ${shiftsDataForAI}
         
-        Sua tarefa é fornecer uma consultoria avançada seguindo EXATAMENTE esta estrutura:
+        SUA TAREFA - FORNEÇA UM RELATÓRIO ESTRUTURADO NESTES 3 PILARES:
 
-        1. ANÁLISE DE PERFIL: Identifique se a estratégia atual foca mais em corridas curtas (volume) ou longas (ticket maior), baseado no ticket médio, viagens/hora e R$/km.
-        2. A META IDEAL (TOP 20): Isole os 20% melhores turnos desta lista (avaliando R$/KM e R$/Hora) e calcule a média deles. Apresente essa média como a "Meta Ideal" que o motorista deve buscar todos os dias.
-        3. DICAS ESTRATÉGICAS ACIONÁVEIS: Dê 2 ou 3 dicas exatas e práticas baseadas nos melhores dias e horários identificados. Exemplo: "Sábado à noite é o seu melhor momento. Procure corridas acima de R$ 25 pagando mais de R$ 2,50 o km".
-        
+        1. 🔍 DIAGNÓSTICO DO PERFIL ATUAL: Qual o padrão atual de corridas do motorista? (Foca em corridas curtas ou longas? Ticket alto ou volume?). Aponte imediatamente o elo mais fraco (ex: R$/Hora baixo devido a corridas longas vazias).
+        2. 🏆 META IDEAL (OS MELHORES 20%): Encontre os 20% melhores turnos nesse histórico. Quais foram os valores de R$/KM, R$/Hora e ticket médio nesses dias de pico? Defina esses números agressivamente como o NOVO PADRÃO IDEAL diário.
+        3. ⚡ PLANO DE AÇÃO TÁTICO: Dê 3 diretrizes pragmáticas baseadas nos dias analisados (ex: "As corridas precisam pagar mais de R$ 2,20/km. Se estiver faturando abaixo de R$ 35/h na terça de manhã, pause."). Identifique os períodos mais e menos lucrativos.
+
         REGRAS IMPORTANTES:
-        - A resposta DEVE ter NO MÁXIMO 1200 caracteres.
-        - Seja extremamente direto, analítico e estratégico.
-        - Use formatação em Markdown (negrito para números importantes).
+        - A resposta DEVE ter NO MÁXIMO 1500 caracteres, mas precisa ser densa, inteligente e baseada rigidamente nos dados acima.
+        - Fale como uma máquina de alta performance. Seja extremamente direto, analítico e estratégico.
+        - Use formatação em Markdown (negrito para números vitais).
         - Não use saudações, vá direto ao ponto.
       `;
 
@@ -1650,13 +1697,22 @@ REGRAS CRÍTICAS:
         - Média de ganhos por hora: R$ ${planningMetrics.avgRph.toFixed(2)}/h
         - Média de ganhos por KM: R$ ${planningMetrics.avgRpkm.toFixed(2)}/km
         - Horas totais necessárias estimadas: ${planningMetrics.totalHoursRemaining.toFixed(1)}h
-        - Horas necessárias por dia: ${planningMetrics.hoursPerDay.toFixed(1)}h
+        - Horas necessárias por dia: ${(planningMetrics.totalHoursRemaining / Math.max(1, planningMetrics.daysRemaining)).toFixed(1)}h
         
+        ${metrics ? `
+        DADOS EXTRAS IDENTIFICADOS:
+        - Valor extra salvo por Tarifas Dinâmicas neste período: R$ ${metrics.totalDynamicValue.toFixed(2)}
+        - Lucro passivo por Taxas de Cancelamento (viagens não executadas): R$ ${metrics.totalCancelledValue.toFixed(2)}
+        - Melhor Horário p/ trabalho: ${metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour.toString().padStart(2, '0')}:00 com R$ ${metrics.bestHourInfo.rph.toFixed(2)}/h` : 'Indisponível'}
+        - Melhor Dia p/ trabalho: ${metrics.bestDayInfo.day !== -1 ? `${['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][metrics.bestDayInfo.day]} com R$ ${metrics.bestDayInfo.rph.toFixed(2)}/h` : 'Indisponível'}
+        ` : ''}
+
         Crie um planejamento estratégico detalhado e motivador. 
         1. Analise se a meta é realista com base na performance atual.
-        2. Dê dicas de como aumentar a eficiência (R$/km e R$/h).
-        3. Organize uma sugestão de jornada diária (ex: turnos quebrados, melhores horários).
-        4. Incentive o motorista.
+        2. Avalie as "Métricas Avançadas" acima para orientar em quais horários ou dias ele deve focar e como as tarifas dinâmicas o ajudam.
+        3. Dê dicas de como aumentar a eficiência (R$/km e R$/h).
+        4. Organize uma sugestão de jornada diária otimizada.
+        5. Incentive o motorista.
         
         Responda em Markdown, use emojis e seja direto.
       `;
@@ -1725,27 +1781,25 @@ REGRAS CRÍTICAS:
       const histCurrent = getStatsForHour(currentHour);
       const histNext = getStatsForHour(nextHour);
 
-      const prompt = `Você é o estrategista de alta performance de um motorista de aplicativo. Use tom direto e focado em resultado.
+      const prompt = `Você é uma IA de Painel Esportivo em Tempo Real para um motorista de aplicativo. 
+Fale de forma enérgica, analítica e de resposta rápida (Estilo telemetria da Fórmula 1).
 
-[DADOS DO TURNO ATUAL]
+[TELEMETRIA DO TURNO]
 - Rodando há: ${currentHours.toFixed(1)}h
-- Corridas feitas: ${qtdTrips}
+- Eficiência / Volume: ${qtdTrips} corridas feitas
 - Faturamento Atual: R$ ${activeShift.totalRevenue.toFixed(2)}
-- R$/Hora atual: R$ ${currentRph.toFixed(2)}
-- R$/Km atual: R$ ${currentRpkm.toFixed(2)}
+- Ritmo Financeiro: R$ ${currentRph.toFixed(2)}/Hora  &  R$ ${currentRpkm.toFixed(2)}/Km
 
-[HISTÓRICO NOS ÚLTIMOS 30 DIAS]
-- Nesta hora (${currentHour}h): Média de R$ ${histCurrent.rph.toFixed(2)}/h (Baseado em ${histCurrent.count} corridas)
-- Na PRÓXIMA HORA (${nextHour}h): Média de R$ ${histNext.rph.toFixed(2)}/h (Baseado em ${histNext.count} corridas)
+[TENDÊNCIA HISTÓRICA DO HORÁRIO (Últ. 30 dias)]
+- Hora Atual (${currentHour}h): Média Histórica de R$ ${histCurrent.rph.toFixed(2)}/h (Base: ${histCurrent.count} corridas)
+- Próxima Hora (${nextHour}h): Média Histórica de R$ ${histNext.rph.toFixed(2)}/h (Base: ${histNext.count} corridas)
 
-[SUA MISSÃO E REGRAS MATEMÁTICAS]
-1. Ideal: >= R$ 40/h | Aceitável: R$ 35 a R$ 39/h | Ruim: R$ 30 a R$ 34/h | Crítico: < R$ 30/h.
-2. Analise a hora atual e a previsão da próxima hora. Se a atual estiver ruim mas a próxima costuma ser excelente, motive-o a continuar. Se ambas forem ruins, sugira pausa/término.
-3. Use NO MÁXIMO 250 caracteres (seja super breve).
-4. Siga este exato formato com bullet points curtos:
-* 🎯 Diagnóstico: [Avalie o agora e a próxima hora]
-* 🛣️ Ação: [Continuar / Pausar / Parar]
-* 💡 Foco Agora: [Dica exata de corrida ex: "Até 5km, max 20min, min R$12"]`;
+SUA MISSÃO EM 3 PONTOS (Use Markdown e BULLETS curtos):
+* 🎯 Diagnóstico Atual: Avalie como ele está agora. Baseado nos Rs/Hora, quão rápido ele está gerando lucro? Se a próxima hora não for historicamente boa, vale a pena continuar ou ele está operando em declínio?
+* 🚀 Filtro Rígido Recomendado: Para reverter/acabar o turno ou turbinar horas boas, dê o filtro de exigência de preço para aceitar corrida agora (ex: Corridas de >R$ 1.80/Km).
+* 🚦 Plano Imediato: Responda diretamente - MANTER RITMO, AUMENTAR RIGOR, PAUSAR PARA RECUPERAR ou DESLOGAR E DESCANSAR.
+
+NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
@@ -2160,7 +2214,85 @@ REGRAS CRÍTICAS:
     const personalFuelCost = totalKmPersonal > 0 ? (totalKmPersonal / currentAvgCons) * currentFuelPrice : 0;
     const personalFuelLiters = totalKmPersonal > 0 ? (totalKmPersonal / currentAvgCons) : 0;
 
+    // Gather trips for all filtered shifts to calculate advanced metrics
+    let totalDynamicValue = 0;
+    let totalCancelledTrips = 0;
+    let totalCancelledValue = 0;
+    let allTripsInPeriod: Trip[] = [];
+
+    filteredShifts.forEach(shift => {
+      const trips = shiftTrips[shift.id] || [];
+      allTripsInPeriod = allTripsInPeriod.concat(trips);
+      trips.forEach(t => {
+        if (t.dynamicValue) totalDynamicValue += t.dynamicValue;
+        if (t.isCancelled) {
+          totalCancelledTrips += 1;
+          totalCancelledValue += t.value;
+        }
+      });
+    });
+
+    // Phase 2: Top Trips Ranking & Time Mapping
+    const validTrips = allTripsInPeriod.filter(t => !t.isCancelled && t.durationSeconds > 0 && t.value > 0);
+    const tripsWithRph = validTrips.map(t => ({
+      ...t,
+      rph: t.value / (t.durationSeconds / 3600)
+    }));
+    
+    // Hall of Fame & Shame
+    const sortedByRph = [...tripsWithRph].sort((a, b) => b.rph - a.rph);
+    const top3BestTrips = sortedByRph.slice(0, 3);
+    const top3WorstTrips = sortedByRph.length >= 3 ? sortedByRph.slice(-3).reverse() : [];
+
+    // Hour Heatmap Analysis
+    const hourStats: Record<number, { count: number, totalVal: number, totalSecs: number }> = {};
+    validTrips.forEach(t => {
+      if (t.startTime) {
+        const hour = t.startTime.toDate().getHours();
+        if (!hourStats[hour]) hourStats[hour] = { count: 0, totalVal: 0, totalSecs: 0 };
+        hourStats[hour].count += 1;
+        hourStats[hour].totalVal += t.value;
+        hourStats[hour].totalSecs += t.durationSeconds;
+      }
+    });
+
+    let bestHourInfo = { hour: -1, rph: 0 };
+    Object.keys(hourStats).forEach(hStr => {
+      const h = parseInt(hStr);
+      const stat = hourStats[h];
+      const rph = stat.totalSecs > 0 ? stat.totalVal / (stat.totalSecs / 3600) : 0;
+      if (rph > bestHourInfo.rph && stat.count >= 2) { 
+        bestHourInfo = { hour: h, rph };
+      }
+    });
+
+    // Best Day Analysis
+    const dayStats: Record<number, { count: number, totalVal: number, totalSecs: number }> = {};
+    validTrips.forEach(t => {
+      if (t.startTime) {
+        const day = t.startTime.toDate().getDay(); 
+        if (!dayStats[day]) dayStats[day] = { count: 0, totalVal: 0, totalSecs: 0 };
+        dayStats[day].count += 1;
+        dayStats[day].totalVal += t.value;
+        dayStats[day].totalSecs += t.durationSeconds;
+      }
+    });
+
+    let bestDayInfo = { day: -1, rph: 0 };
+    Object.keys(dayStats).forEach(dStr => {
+      const d = parseInt(dStr);
+      const stat = dayStats[d];
+      const rph = stat.totalSecs > 0 ? stat.totalVal / (stat.totalSecs / 3600) : 0;
+      if (rph > bestDayInfo.rph && stat.count >= 2) {
+        bestDayInfo = { day: d, rph };
+      }
+    });
+
     return {
+      top3BestTrips,
+      top3WorstTrips,
+      bestHourInfo,
+      bestDayInfo,
       revenuePerKm: totalKmWork > 0 ? totalRevenue / totalKmWork : 0,
       revenuePerHour: totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0,
       ticketMedio: totalTrips > 0 ? totalRevenue / totalTrips : 0,
@@ -2181,9 +2313,13 @@ REGRAS CRÍTICAS:
       totalLiters,
       totalCosts: estimatedFuelCost + maintenanceCost,
       maintenancePercentage: currentMaintPercentage,
-      dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0
+      dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0,
+      totalDynamicValue,
+      totalCancelledTrips,
+      totalCancelledValue,
+      allTripsInPeriod
     };
-  }, [shifts, expenses, fuelRecords, insightFilter, settings]);
+  }, [shifts, expenses, fuelRecords, insightFilter, settings, shiftTrips]);
 
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) return null;
@@ -2248,10 +2384,9 @@ REGRAS CRÍTICAS:
       ? Math.max(...allTodayShifts.map(s => s.lastKm || s.endKm || s.startKm || 0)) 
       : 0;
 
-    const totalKmDriven = allTodayShifts.reduce((acc, s) => {
-      const workKm = s.totalWorkKm || (s.endKm ? s.endKm - s.startKm : (s.lastKm ? s.lastKm - s.startKm : 0));
-      return acc + (Number(workKm) || 0);
-    }, 0);
+    const totalWorkKm = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalWorkKm) || 0), 0);
+    const totalPersonalKm = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalPersonalKm) || 0), 0);
+    const totalKmDrivenToday = totalWorkKm + totalPersonalKm;
 
     return { 
       totalRevenue, 
@@ -2259,7 +2394,9 @@ REGRAS CRÍTICAS:
       totalTrips, 
       startKm, 
       maxKm,
-      totalKmDriven,
+      totalWorkKm,
+      totalPersonalKm,
+      totalKmDrivenToday,
       shiftCount: allTodayShifts.length 
     };
   }, [shifts, activeShift, elapsedTime]);
@@ -2659,18 +2796,40 @@ REGRAS CRÍTICAS:
                 {activeShift?.status === 'active' && (
                   <div className="mt-8">
                     <Button 
-                      onClick={() => changeShiftState(activeShift.currentState === 'ride' ? 'idle' : 'ride')} 
+                      onClick={() => setShowQuickTripModal(true)} 
                       variant="outline"
-                      className={cn(
-                        "w-full py-6 border-none transition-all duration-300", 
-                        activeShift.currentState === 'ride' 
-                          ? "bg-green-500 text-white shadow-[0_0_20px_rgba(34,197,94,0.6)] scale-100" 
-                          : "bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:bg-blue-500 scale-100"
-                      )} 
-                      icon={activeShift.currentState === 'ride' ? CheckCircle2 : Users}
+                      className="w-full py-6 border-none transition-all duration-300 bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:bg-blue-500 scale-100" 
+                      icon={Plus}
                     >
-                      {activeShift.currentState === 'ride' ? 'Finalizar Corrida' : 'Com Passageiro'}
+                      Registrar Nova Corrida
                     </Button>
+
+                    <div className="mt-6 space-y-4">
+                       <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Estado de Produtividade</h3>
+                       <div className="grid grid-cols-3 gap-2">
+                          {[
+                            { id: 'idle', label: 'Parado', icon: Coffee, color: 'text-gray-500', activeBg: 'bg-gray-100 dark:bg-gray-800' },
+                            { id: 'dispatch', label: 'Buscando', icon: Compass, color: 'text-blue-500', activeBg: 'bg-blue-50 dark:bg-blue-900/40' },
+                            { id: 'ride', label: 'Corrida', icon: Users, color: 'text-green-500', activeBg: 'bg-green-50 dark:bg-green-900/40' }
+                          ].map((state) => (
+                            <button
+                              key={state.id}
+                              onClick={() => changeShiftState(state.id as any)}
+                              className={cn(
+                                "flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-300",
+                                activeShift.currentState === state.id 
+                                  ? cn("border-transparent shadow-sm", state.activeBg)
+                                  : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 opacity-60 grayscale hover:grayscale-0 hover:opacity-100"
+                              )}
+                            >
+                               <state.icon size={20} className={cn("mb-2", activeShift.currentState === state.id ? state.color : "text-gray-400")} />
+                               <span className={cn("text-[10px] font-black uppercase tracking-tight", activeShift.currentState === state.id ? state.color : "text-gray-400")}>
+                                 {state.label}
+                               </span>
+                            </button>
+                          ))}
+                       </div>
+                    </div>
                   </div>
                 )}
 
@@ -2800,8 +2959,16 @@ REGRAS CRÍTICAS:
                     <p className="text-lg font-bold dark:text-white">{todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km</p>
                   </div>
                   <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Inicial (Hoje)</p>
+                    <p className="text-lg font-bold dark:text-white">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Total Rodado Hoje</p>
+                    <p className="text-lg font-bold text-indigo-600 dark:text-indigo-400">{todayMetrics.totalKmDrivenToday.toFixed(1)} km</p>
+                  </div>
+                  <div>
                     <p className="text-xs text-gray-500 dark:text-gray-400">R$ / KM Parcial</p>
-                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalKmDriven > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalKmDriven).toFixed(2) : '0.00'}</p>
+                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalWorkKm > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalWorkKm).toFixed(2) : '0.00'}</p>
                   </div>
                 </div>
               </Card>
@@ -2909,29 +3076,32 @@ REGRAS CRÍTICAS:
                   <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
                     <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'week' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Semana</button>
                     <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
-                    <button onClick={() => setHistoryFilter('all')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'all' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Tudo</button>
                   </div>
 
-                  {historyFilter !== 'all' && (
-                    <div className="flex items-center justify-between sm:justify-start gap-4 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
-                      <button 
-                        onClick={prevHistoryRange}
-                        className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
-                      >
-                        <ChevronLeft size={18} />
-                      </button>
-                      <div className="text-center min-w-[120px]">
-                        <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest leading-none mb-0.5">{historyRangeLabel.type}</p>
-                        <p className="text-xs font-bold dark:text-white capitalize">{historyRangeLabel.label}</p>
-                      </div>
-                      <button 
-                        onClick={nextHistoryRange}
-                        className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
-                      >
-                        <ChevronRight size={18} />
-                      </button>
+                  <div className="flex items-center justify-between sm:justify-start gap-4 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
+                    <button 
+                      onClick={prevHistoryRange}
+                      className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <div className="text-center min-w-[120px]">
+                      <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest leading-none mb-0.5">{historyRangeLabel.type}</p>
+                      <p className="text-xs font-bold dark:text-white capitalize">{historyRangeLabel.label}</p>
                     </div>
-                  )}
+                    <button 
+                      onClick={nextHistoryRange}
+                      className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
+                    >
+                      <ChevronRight size={18} />
+                    </button>
+                  </div>
+                  
+                  <div className="flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
+                     <button onClick={() => setHistoryPendingOnly(!historyPendingOnly)} className={cn("flex-1 flex gap-2 items-center justify-center py-2 px-4 text-sm font-medium rounded-lg transition-all", historyPendingOnly ? "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 shadow-sm border border-red-100 dark:border-red-900" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>
+                        <AlertCircle size={16} /> Pendentes
+                     </button>
+                  </div>
                 </div>
 
                 {shifts.length > 0 && (
@@ -2968,6 +3138,26 @@ REGRAS CRÍTICAS:
                   const isExpanded = !!expandedDays[dateKey]; // Default to collapsed
                   const rph = group.totalTime > 0 ? group.totalRevenue / (group.totalTime / 3600) : 0;
                   const rpkm = group.totalWorkKm > 0 ? group.totalRevenue / group.totalWorkKm : 0;
+                  
+                  // Day Trip Completeness Check
+                  const totalExpectedDayTrips = group.shifts.reduce((sum, s) => sum + (s.totalTrips || 0), 0);
+                  const totalRegisteredDayTrips = group.shifts.reduce((sum, s) => sum + ((shiftTrips[s.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length), 0);
+                  
+                  let dayTripStatusColor = null;
+                  let dayTripStatusTitle = "";
+                  if (totalExpectedDayTrips > 0 || totalRegisteredDayTrips > 0) {
+                    if (totalRegisteredDayTrips >= totalExpectedDayTrips && totalExpectedDayTrips > 0) {
+                       dayTripStatusColor = "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]";
+                       dayTripStatusTitle = "Todas corridas detalhadas";
+                    } else {
+                       dayTripStatusColor = "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]";
+                       dayTripStatusTitle = "Falta detalhar corridas";
+                    }
+                  } else if (group.totalRevenue > 0) {
+                       dayTripStatusColor = "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]";
+                       dayTripStatusTitle = "Falta detalhar corridas";
+                  }
+
                   return (
                     <div key={dateKey} className="space-y-3 mb-8">
                       <div 
@@ -2975,10 +3165,15 @@ REGRAS CRÍTICAS:
                         onClick={() => toggleDay(dateKey)}
                       >
                         <div>
-                          <p className="text-lg font-bold dark:text-white capitalize flex items-center gap-2">
-                            {format(group.date, "EEEE, d 'de' MMMM", { locale: ptBR })}
-                            <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
-                          </p>
+                          <div className="flex items-center gap-2.5">
+                            {dayTripStatusColor && (
+                              <div className={cn("w-1.5 h-5 rounded-full shrink-0", dayTripStatusColor)} title={dayTripStatusTitle} />
+                            )}
+                            <p className="text-lg font-bold dark:text-white capitalize flex items-center gap-2">
+                              {format(group.date, "EEEE, d 'de' MMMM", { locale: ptBR })}
+                              <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
+                            </p>
+                          </div>
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400 font-medium mt-1">
                             <span className="flex items-center gap-1"><Clock size={14} /> {formatTime(group.totalTime)}</span>
                             <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
@@ -2999,18 +3194,43 @@ REGRAS CRÍTICAS:
                             exit={{ height: 0, opacity: 0 }}
                             className="space-y-3 overflow-hidden px-1"
                           >
-                            {group.shifts.map((shift, index) => (
-                              <Card key={shift.id} className="hover:border-blue-200 transition-all duration-300 cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 border-l-blue-500 shadow-sm hover:shadow-md bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500">
+                            {group.shifts.map((shift, index) => {
+                              const shiftTripsCount = (shiftTrips[shift.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length;
+                              const expectedTrips = shift.totalTrips || 0;
+                              
+                              let shiftStatusColor = null;
+                              let shiftStatusTitle = "";
+                              
+                              if (expectedTrips > 0 || shiftTripsCount > 0) {
+                                if (shiftTripsCount >= expectedTrips && expectedTrips > 0) {
+                                   shiftStatusColor = "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]";
+                                   shiftStatusTitle = "Todas corridas cadastradas";
+                                } else {
+                                   shiftStatusColor = "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]";
+                                   shiftStatusTitle = "Faltam corridas para cadastrar";
+                                }
+                              } else if (shift.totalRevenue > 0) {
+                                   shiftStatusColor = "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]";
+                                   shiftStatusTitle = "Faltam corridas para cadastrar";
+                              }
+
+                              return (
+                              <Card key={shift.id} className={cn("hover:border-blue-200 transition-all duration-300 cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 shadow-sm hover:shadow-md bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500", shiftStatusColor?.includes('green') ? 'border-l-green-500' : shiftStatusColor?.includes('red') ? 'border-l-red-500' : 'border-l-blue-500')}>
                                 <div className="p-3 sm:p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
                                   <div className="flex justify-between items-start mb-3">
                                     <div className="flex items-center gap-3">
-                                      <div className="bg-blue-100 dark:bg-blue-900/30 p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0">
-                                        <Car size={18} className="text-blue-600 dark:text-blue-400" />
+                                      <div className={cn("p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0", shiftStatusColor?.includes('green') ? 'bg-green-100 dark:bg-green-900/30' : shiftStatusColor?.includes('red') ? 'bg-red-100 dark:bg-red-900/30' : 'bg-blue-100 dark:bg-blue-900/30')}>
+                                        <Car size={18} className={shiftStatusColor?.includes('green') ? 'text-green-600 dark:text-green-400' : shiftStatusColor?.includes('red') ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'} />
                                       </div>
                                       <div>
-                                        <p className="text-[10px] sm:text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">
-                                          Turno {group.shifts.length - index}
-                                        </p>
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                          {shiftStatusColor && (
+                                            <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", shiftStatusColor)} title={shiftStatusTitle} />
+                                          )}
+                                          <p className="text-[10px] sm:text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none">
+                                            Turno {group.shifts.length - index}
+                                          </p>
+                                        </div>
                                         <p className="text-[11px] sm:text-xs font-bold text-gray-400 dark:text-gray-500 flex items-center gap-1">
                                           <Clock size={10} className="opacity-70" />
                                           {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
@@ -3164,17 +3384,20 @@ REGRAS CRÍTICAS:
                                               const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
                                               const tripRph = trip.value / (trip.durationSeconds / 3600);
                                               
-                                              let bgColorClass = "bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30"; // <30
+                                              let bgColorClass = "bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30";
                                               let textColorClass = "text-red-700 dark:text-red-400";
-                                              if (tripRph >= 40) {
-                                                bgColorClass = "bg-teal-50 dark:bg-teal-900/10 border-teal-100 dark:border-teal-900/30";
-                                                textColorClass = "text-teal-700 dark:text-teal-400";
-                                              } else if (tripRph >= 35) {
-                                                bgColorClass = "bg-green-50 dark:bg-green-900/10 border-green-100 dark:border-green-900/30";
-                                                textColorClass = "text-green-700 dark:text-green-400";
-                                              } else if (tripRph >= 30) {
-                                                bgColorClass = "bg-orange-50 dark:bg-orange-900/10 border-orange-100 dark:border-orange-900/30";
-                                                textColorClass = "text-orange-700 dark:text-orange-400";
+                                              if (trip.isCancelled) {
+                                                bgColorClass = "bg-gray-100 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/50";
+                                                textColorClass = "text-gray-500 dark:text-gray-400";
+                                              } else if (tripRph > 42) {
+                                                bgColorClass = "bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800/40"; // Verde Claro
+                                                textColorClass = "text-green-600 dark:text-green-400 font-black";
+                                              } else if (tripRph > 37) {
+                                                bgColorClass = "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30"; // Verde Escuro
+                                                textColorClass = "text-emerald-700 dark:text-emerald-500";
+                                              } else if (tripRph > 33) {
+                                                bgColorClass = "bg-orange-50 dark:bg-orange-900/10 border-orange-100 dark:border-orange-900/30"; // Laranja
+                                                textColorClass = "text-orange-600 dark:text-orange-400";
                                               }
 
                                               return (
@@ -3186,14 +3409,26 @@ REGRAS CRÍTICAS:
                                                     <div className="flex items-center justify-between gap-1 w-full flex-wrap sm:flex-nowrap">
                                                        {tripHour && <span className={cn("text-xs font-bold tabular-nums w-10 shrink-0", textColorClass)}>{tripHour}</span>}
                                                        <span className={cn("font-black text-sm shrink-0 min-w-[60px]", textColorClass)}>R$ {trip.value.toFixed(2)}</span>
-                                                       <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
-                                                       <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-80", textColorClass)}>
-                                                         {mins > 0 ? `${mins}m ` : ''}{secs}s
-                                                       </span>
-                                                       <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
-                                                       <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-90", textColorClass)}>
-                                                         {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
-                                                       </span>
+                                                       
+                                                       {trip.isCancelled ? (
+                                                         <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded-md self-center ml-2 border", "bg-red-500 text-white border-red-600 dark:bg-red-900/40 dark:text-red-400 dark:border-red-800")}>Cancelada</span>
+                                                       ) : (
+                                                         <>
+                                                           <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
+                                                           <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-80", textColorClass)}>
+                                                             {mins > 0 ? `${mins}m ` : ''}{secs}s
+                                                           </span>
+                                                           <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
+                                                           <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-90", textColorClass)}>
+                                                             {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
+                                                           </span>
+                                                           {trip.dynamicValue && trip.dynamicValue > 0 && (
+                                                             <span className="text-[10px] px-1.5 py-0.5 ml-1 bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 rounded-md font-bold shrink-0 border border-teal-200 dark:border-teal-800">
+                                                               + R$ {trip.dynamicValue.toFixed(2)} dinâmico
+                                                             </span>
+                                                           )}
+                                                         </>
+                                                       )}
                                                     </div>
                                                   </div>
                                                   <div className="flex gap-1 ml-2 shrink-0 relative z-10">
@@ -3230,7 +3465,8 @@ REGRAS CRÍTICAS:
                                   )}
                                 </AnimatePresence>
                               </Card>
-                            ))}
+                            );
+                          })}
                           </motion.div>
                         )}
                       </AnimatePresence>
@@ -3730,33 +3966,150 @@ REGRAS CRÍTICAS:
                     </Card>
                   </div>
 
-                  {/* Custos e Lucro */}
+                  {/* Secao Cofre Inteligente (Bento Grid) */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Custos Estimados</h3>
-                    <Card className="bg-gray-900 text-white p-6">
-                      <div className="space-y-4">
-                        <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                          <span className="text-gray-400 text-sm">Combustível (Trabalho)</span>
-                          <span className="font-bold">R$ {metrics.estimatedFuelCost.toFixed(2)}</span>
-                        </div>
-                        <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                          <span className="text-gray-400 text-sm">Combustível (Pessoal)</span>
-                          <span className="font-bold text-orange-400">R$ {metrics.personalFuelCost.toFixed(2)} <span className="text-xs text-gray-500">({metrics.personalFuelLiters.toFixed(1)}L)</span></span>
-                        </div>
-                        <div className="flex justify-between items-center border-b border-white/10 pb-4">
-                          <span className="text-gray-400 text-sm">Manutenção ({metrics.maintenancePercentage}%)</span>
-                          <span className="font-bold underline decoration-gray-500/50 underline-offset-4">R$ {metrics.maintenanceCost.toFixed(2)}</span>
-                        </div>
-                        <div className="space-y-4 pt-2">
-                          <div className="flex justify-between items-center">
-                            <span className="text-sm font-medium text-gray-300">Lucro (Sem Reserva Manut.)</span>
-                            <span className="text-xl font-bold text-blue-400">R$ {(metrics.totalRevenue - metrics.estimatedFuelCost).toFixed(2)}</span>
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Inteligência Estratégica</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                       <Card className="p-4 bg-purple-50 dark:bg-purple-900/10 border-purple-100 dark:border-purple-900/20 col-span-1 shadow-sm">
+                          <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-1 tracking-widest">Melhor Horário</p>
+                          <p className="text-2xl font-black text-purple-700 dark:text-purple-300">
+                            {metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour.toString().padStart(2, '0')}:00` : '--:--'}
+                          </p>
+                          {metrics.bestHourInfo.rph > 0 && (
+                            <p className="text-[10px] text-purple-600/70 dark:text-purple-400/70 mt-1 line-clamp-2">
+                               Picos de R$ {metrics.bestHourInfo.rph.toFixed(2)}/h
+                            </p>
+                          )}
+                       </Card>
+                       <Card className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border-indigo-100 dark:border-indigo-900/20 col-span-1 shadow-sm">
+                          <div className="flex justify-between items-start">
+                             <div>
+                                <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase mb-1 tracking-widest">Melhor Dia</p>
+                                <p className="text-xl font-black text-indigo-700 dark:text-indigo-300">
+                                  {metrics.bestDayInfo.day !== -1 ? ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][metrics.bestDayInfo.day] : '---'}
+                                </p>
+                             </div>
                           </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-lg font-bold">Lucro Líquido Final</span>
-                            <span className="text-2xl font-bold text-green-400">R$ {metrics.estimatedProfit.toFixed(2)}</span>
+                          {metrics.bestDayInfo.rph > 0 && (
+                            <p className="text-[10px] text-indigo-600/70 dark:text-indigo-400/70 mt-1 line-clamp-2">
+                               Média de R$ {metrics.bestDayInfo.rph.toFixed(2)}/h
+                            </p>
+                          )}
+                       </Card>
+                    </div>
+                  </div>
+
+                  {/* Hall of Fame - Top Trips */}
+                  {metrics.top3BestTrips.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Hall da Fama (Top 3 Viagens)</h3>
+                      <div className="space-y-2">
+                        {metrics.top3BestTrips.map((t, idx) => (
+                          <div key={t.id} className="flex justify-between items-center px-4 py-3 bg-green-50 dark:bg-green-900/10 rounded-xl border border-green-100 dark:border-green-900/30">
+                             <div className="flex items-center gap-3">
+                                <span className="text-xl font-black text-green-200 dark:text-green-900">#{idx + 1}</span>
+                                <div>
+                                  <p className="font-bold text-green-700 dark:text-green-400">R$ {t.value.toFixed(2)}</p>
+                                  <p className="text-xs text-green-600/70 dark:text-green-400/70">
+                                    {(t.durationSeconds / 60).toFixed(0)}m • {t.distanceKm}km {t.dynamicValue ? `(Dinâmico ${t.dynamicValue})` : ''}
+                                  </p>
+                                </div>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
+                             </div>
                           </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Hall of Shame - Worst Trips */}
+                  {metrics.top3WorstTrips.length > 0 && (
+                    <div className="space-y-3">
+                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Fuga Imediata (Piores Viagens)</h3>
+                      <div className="space-y-2">
+                        {metrics.top3WorstTrips.map((t, idx) => (
+                          <div key={t.id} className="flex justify-between items-center px-4 py-3 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/30 opacity-80">
+                             <div className="flex items-center gap-3">
+                                <span className="text-xl font-black text-red-200 dark:text-red-900">!</span>
+                                <div>
+                                  <p className="font-bold text-red-700 dark:text-red-400">R$ {t.value.toFixed(2)}</p>
+                                  <p className="text-xs text-red-600/70 dark:text-red-400/70">
+                                    {(t.durationSeconds / 60).toFixed(0)}m • {t.distanceKm}km
+                                  </p>
+                                </div>
+                             </div>
+                             <div className="text-right">
+                               <p className="text-sm font-black text-red-600 dark:text-red-400">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
+                             </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Secao Dinheiro Extra */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Análise de Receita Extra</h3>
+                    <div className="grid grid-cols-2 gap-3">
+                       <Card className="p-4 bg-teal-50 dark:bg-teal-900/10 border-teal-100 dark:border-teal-900/20 col-span-1 shadow-sm">
+                          <p className="text-[10px] font-bold text-teal-600 dark:text-teal-400 uppercase mb-1 tracking-widest">Dinâmicos Salvos</p>
+                          <p className="text-2xl font-black text-teal-700 dark:text-teal-300">R$ {metrics.totalDynamicValue.toFixed(2)}</p>
+                          <p className="text-[10px] text-teal-600/70 dark:text-teal-400/70 mt-1 line-clamp-2">
+                             Dinheiros "grátis" na alta.
+                          </p>
+                       </Card>
+                       <Card className="p-4 bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 col-span-1 shadow-sm">
+                          <div className="flex justify-between items-start">
+                             <div>
+                                <p className="text-[10px] font-bold text-gray-500 uppercase mb-1 tracking-widest">Taxas Canceladas</p>
+                                <p className="text-2xl font-black text-gray-800 dark:text-gray-200">R$ {metrics.totalCancelledValue.toFixed(2)}</p>
+                             </div>
+                             <span className="text-xs font-bold text-white bg-gray-400 dark:bg-gray-600 px-2 rounded-full">{metrics.totalCancelledTrips}x</span>
+                          </div>
+                          <p className="text-[10px] text-gray-500 mt-1 line-clamp-2">
+                             Ganhos sem rodar.
+                          </p>
+                       </Card>
+                    </div>
+                  </div>
+
+                  {/* Custos e Lucro (Bento Grid) */}
+                  <div className="space-y-3">
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Custos & Lucro (Período Atual)</h3>
+                    
+                    <Card className="bg-gray-900 border-gray-800 shadow-xl overflow-hidden p-0">
+                      {/* Top Bar - Resumo Liquido */}
+                      <div className="p-5 bg-gradient-to-r from-green-600/20 to-blue-600/20 border-b border-gray-800">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Lucro Líquido Final Estimado</p>
+                        <div className="flex justify-between items-baseline">
+                           <p className="text-3xl font-black text-white tracking-tighter">R$ {metrics.estimatedProfit.toFixed(2)}</p>
+                           {metrics.totalRevenue > 0 && (
+                              <div className="text-xs font-bold text-green-400 px-2 py-1 bg-green-400/10 rounded-lg">
+                                 {((metrics.estimatedProfit / metrics.totalRevenue) * 100).toFixed(0)}% de Margem
+                              </div>
+                           )}
                         </div>
+                      </div>
+
+                      {/* Info Grid */}
+                      <div className="grid grid-cols-2 divide-x divide-y divide-gray-800 border-b border-gray-800 text-sm">
+                         <div className="p-4 bg-gray-900/50">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Combustível Trabalho</p>
+                            <p className="font-bold text-gray-200">R$ {metrics.estimatedFuelCost.toFixed(2)}</p>
+                         </div>
+                         <div className="p-4 bg-gray-900/50">
+                            <p className="text-[10px] font-bold text-gray-500 uppercase mb-1">Reserva Manut. ({metrics.maintenancePercentage}%)</p>
+                            <p className="font-bold text-orange-400">R$ {metrics.maintenanceCost.toFixed(2)}</p>
+                         </div>
+                      </div>
+                      
+                      <div className="p-4">
+                         <div className="flex justify-between items-center text-xs">
+                             <span className="text-gray-500 font-bold uppercase">Prejuízo Pessoal (Uso Fora do App)</span>
+                             <span className="font-bold text-red-400 line-through">R$ {metrics.personalFuelCost.toFixed(2)}</span>
+                         </div>
                       </div>
                     </Card>
                   </div>
@@ -4411,6 +4764,10 @@ REGRAS CRÍTICAS:
         />
       </Modal>
 
+      <Modal isOpen={showQuickTripModal} onClose={() => setShowQuickTripModal(false)} title="Registrar Corrida">
+        <QuickTripForm onSubmit={registerQuickTrip} />
+      </Modal>
+
       <Modal isOpen={showExpenseModal} onClose={() => setShowExpenseModal(false)} title="Novo Gasto">
         <ExpenseForm onSubmit={addExpense} />
       </Modal>
@@ -4586,21 +4943,17 @@ REGRAS CRÍTICAS:
               if (!currentShift) return;
               
               const batch = writeBatch(db);
-              let diffRevenue = 0;
 
               if (tripId) {
-                const existingTrip = (shiftTrips[selectedShiftId] || []).find(t => t.id === tripId);
-                diffRevenue = data.value - (existingTrip ? existingTrip.value : 0);
-                
                 batch.update(doc(db, 'shifts', selectedShiftId, 'trips', tripId), {
                   value: data.value,
                   dynamicValue: data.dynamicValue,
                   durationSeconds: data.durationSeconds,
                   distanceKm: data.distanceKm,
-                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null
+                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null,
+                  isCancelled: data.isCancelled || false
                 });
               } else {
-                diffRevenue = data.value;
                 const newTripRef = doc(collection(db, 'shifts', selectedShiftId, 'trips'));
                 batch.set(newTripRef, {
                   userId: user?.uid,
@@ -4610,32 +4963,23 @@ REGRAS CRÍTICAS:
                   durationSeconds: data.durationSeconds,
                   distanceKm: data.distanceKm,
                   timestamp: serverTimestamp(),
-                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null
+                  startTime: data.startTime ? Timestamp.fromDate(data.startTime) : null,
+                  isCancelled: data.isCancelled || false
                 });
-                batch.update(doc(db, 'shifts', selectedShiftId), {
-                  totalTrips: (currentShift.totalTrips || 0) + 1
-                });
+                // DONT update Shift's total trips or revenue. User manages shift totals independently of detailed trips.
               }
 
-              if (diffRevenue !== 0) {
-                 batch.update(doc(db, 'shifts', selectedShiftId), {
-                   totalRevenue: (currentShift.totalRevenue || 0) + diffRevenue
-                 });
-              }
               await batch.commit();
             }}
             onDelete={async (tripId) => {
               const currentShift = shifts.find(s => s.id === selectedShiftId);
               if (!currentShift) return;
 
-              const existingTrip = (shiftTrips[selectedShiftId] || []).find(t => t.id === tripId);
               const batch = writeBatch(db);
               
               batch.delete(doc(db, 'shifts', selectedShiftId, 'trips', tripId));
-              batch.update(doc(db, 'shifts', selectedShiftId), {
-                 totalTrips: Math.max(0, (currentShift.totalTrips || 0) - 1),
-                 totalRevenue: Math.max(0, (currentShift.totalRevenue || 0) - (existingTrip ? existingTrip.value : 0))
-              });
+              // DONT update Shift's total trips or revenue. User manages shift totals independently of detailed trips.
+              
               await batch.commit();
             }}
           />
@@ -4764,6 +5108,23 @@ function StartShiftForm({ onSubmit, initialKm }: { onSubmit: (km: number, autono
       <Input label="KM Total do Painel" type="number" inputMode="numeric" value={km} onChange={e => setKm(e.target.value)} placeholder="Ex: 45000" />
       <Input label="Autonomia Restante (KM)" type="number" inputMode="numeric" value={autonomy} onChange={e => setAutonomy(e.target.value)} placeholder="Ex: 185" />
       <Button onClick={() => onSubmit(Number(km), Number(autonomy))} className="w-full py-4">Iniciar Agora</Button>
+    </div>
+  );
+}
+
+function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
+  const [value, setValue] = useState('');
+  
+  return (
+    <div className="space-y-6">
+      <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
+      <Button 
+        onClick={() => onSubmit(Number(value))} 
+        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white"
+        disabled={!value || Number(value) <= 0}
+      >
+        Salvar Nova Corrida
+      </Button>
     </div>
   );
 }
@@ -5118,13 +5479,22 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
   const [distanceStr, setDistanceStr] = useState("");
   const [isDynamic, setIsDynamic] = useState(false);
   const [dynamicValueStr, setDynamicValueStr] = useState("");
+  const [isCancelled, setIsCancelled] = useState(false);
   
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [askAddMore, setAskAddMore] = useState(false);
+
+  // Sorting trips chronologically
+  const sortedTrips = useMemo(() => {
+    return [...existingTrips].sort((a, b) => {
+      const timeA = a.startTime ? a.startTime.toMillis() : a.timestamp.toMillis();
+      const timeB = b.startTime ? b.startTime.toMillis() : b.timestamp.toMillis();
+      return timeA - timeB;
+    });
+  }, [existingTrips]);
 
   useEffect(() => {
     if (initialTripId) {
-      const idx = existingTrips.findIndex(t => t.id === initialTripId);
+      const idx = sortedTrips.findIndex(t => t.id === initialTripId);
       if (idx !== -1) {
         setViewMode('edit');
         setEditIndex(idx);
@@ -5134,11 +5504,11 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
     } else {
       setViewMode('new');
     }
-  }, [initialTripId, existingTrips.length]); // Wait for trips to be loaded
+  }, [initialTripId, sortedTrips.length]);
 
   useEffect(() => {
     if (viewMode === 'edit') {
-       const trip = existingTrips[editIndex];
+       const trip = sortedTrips[editIndex];
        if (trip) {
          setTimeStr(trip.startTime ? format(trip.startTime.toDate(), "HH:mm") : "");
          setValueStr(trip.value.toString());
@@ -5153,11 +5523,12 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
            setIsDynamic(false);
            setDynamicValueStr("");
          }
+         setIsCancelled(trip.isCancelled || false);
        } else {
          setViewMode('new');
        }
     }
-  }, [viewMode, editIndex, existingTrips]);
+  }, [viewMode, editIndex, sortedTrips]);
 
   const clearNewForm = () => {
     setTimeStr("");
@@ -5166,6 +5537,17 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
     setDistanceStr("");
     setIsDynamic(false);
     setDynamicValueStr("");
+    setIsCancelled(false);
+  };
+
+  const handleCancelToggle = (checked: boolean) => {
+    setIsCancelled(checked);
+    if (checked) {
+      // Auto-pre-fill for canceled
+      setValueStr("3.50");
+      setDurationStr("00:00");
+      setDistanceStr("0");
+    }
   };
 
   const handleDurationMask = (val: string) => {
@@ -5209,18 +5591,24 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
         dynamicValue: dynVal,
         durationSeconds: sec,
         distanceKm: distVal,
-        startTime: startTimeDate
+        startTime: startTimeDate,
+        isCancelled
       };
 
       if (viewMode === 'new') {
         await onSave(undefined, tripData);
-        setAskAddMore(true);
+        clearNewForm();
       } else {
-        const trip = existingTrips[editIndex];
+        const trip = sortedTrips[editIndex];
         if (trip) {
            await onSave(trip.id, tripData);
         }
-        setAskAddMore(true);
+        
+        if (editIndex < sortedTrips.length - 1) {
+          setEditIndex(editIndex + 1);
+        } else {
+          onClose(); // Automatically close when finished with the sequence
+        }
       }
     } finally {
       setIsSubmitting(false);
@@ -5229,9 +5617,9 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
 
   const handleGoBack = () => {
      if (viewMode === 'new') {
-        if (existingTrips.length > 0) {
+        if (sortedTrips.length > 0) {
            setViewMode('edit');
-           setEditIndex(existingTrips.length - 1);
+           setEditIndex(sortedTrips.length - 1);
         }
      } else if (editIndex > 0) {
         setEditIndex(editIndex - 1);
@@ -5240,7 +5628,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
 
   const handleGoForward = () => {
      if (viewMode === 'edit') {
-        if (editIndex < existingTrips.length - 1) {
+        if (editIndex < sortedTrips.length - 1) {
            setEditIndex(editIndex + 1);
         } else {
            setViewMode('new');
@@ -5250,10 +5638,10 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
   };
 
   const handleDelete = async () => {
-     if (viewMode === 'edit' && existingTrips[editIndex]) {
+     if (viewMode === 'edit' && sortedTrips[editIndex]) {
         setIsSubmitting(true);
         try {
-          await onDelete(existingTrips[editIndex].id);
+          await onDelete(sortedTrips[editIndex].id);
           if (editIndex > 0) {
              setEditIndex(editIndex - 1);
           } else {
@@ -5266,27 +5654,6 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
      }
   };
 
-  if (askAddMore) {
-    return (
-      <div className="text-center py-8 space-y-6">
-        <CheckCircle2 size={56} className="mx-auto text-green-500 animate-in zoom-in" />
-        <div>
-          <p className="text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider text-sm mb-1">Sucesso</p>
-          <span className="text-xl font-black text-gray-900 dark:text-white leading-tight block">Corrida Salva!</span>
-        </div>
-        <p className="text-gray-600 dark:text-gray-300">Deseja detalhar mais uma corrida neste turno?</p>
-        <div className="flex gap-4 pt-4">
-           <Button variant="outline" className="flex-1 py-4 font-bold" onClick={onClose}>Não, fechar</Button>
-           <Button className="flex-1 py-4 shadow-lg font-bold" onClick={() => { 
-             setAskAddMore(false); 
-             setViewMode('new'); 
-             clearNewForm(); 
-           }}>Sim, adicionar</Button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
@@ -5298,7 +5665,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
           <ChevronLeft size={24} />
         </button>
         <span className="text-sm font-bold text-gray-500 uppercase tracking-widest">
-          {viewMode === 'new' ? 'Nova Corrida' : `Editando Corrida ${editIndex + 1}/${existingTrips.length}`}
+          {viewMode === 'new' ? 'Nova Corrida' : `Editando Corrida ${editIndex + 1}/${sortedTrips.length}`}
         </span>
         <button 
           onClick={handleGoForward} 
@@ -5308,6 +5675,12 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
           <ChevronRight size={24} />
         </button>
       </div>
+
+      {isCancelled && (
+        <div className="bg-red-50 dark:bg-red-900/20 px-4 py-2 rounded-xl mb-4 text-xs font-bold text-red-600 dark:text-red-400 border border-red-100 dark:border-red-900/30 flex items-center justify-center">
+          ⚠️ Corrida Cancelada Selecionada
+        </div>
+      )}
 
       <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl space-y-4 border border-gray-100 dark:border-gray-700 relative">
         <div className="grid grid-cols-2 gap-4">
@@ -5323,11 +5696,12 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
             value={durationStr} 
             onChange={e => handleDurationMask(e.target.value)} 
             placeholder="00:00"
+            disabled={isCancelled}
           />
         </div>
         
         <div className="grid grid-cols-2 gap-4">
-          <CurrencyInput label="Valor Total (R$)" value={valueStr} onValueChange={setValueStr} />
+          <CurrencyInput label={isCancelled ? "Taxa Cancelamento (R$)" : "Valor Total (R$)"} value={valueStr} onValueChange={setValueStr} />
           <Input 
             label="Distância (KM)" 
             type="number" 
@@ -5335,22 +5709,35 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
             value={distanceStr} 
             onChange={e => setDistanceStr(e.target.value)} 
             placeholder="Ex: 5.2"
+            disabled={isCancelled}
           />
         </div>
 
-        <div className="pt-2 border-t border-gray-200 dark:border-gray-700">
-          <label className="flex items-center justify-between w-full cursor-pointer mb-3">
-            <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Teve Tarifa Dinâmica?</span>
-            <div className={cn("w-12 h-6 rounded-full transition-colors relative", isDynamic ? "bg-teal-500" : "bg-gray-300 dark:bg-gray-600")}>
-              <div className={cn("w-4 h-4 rounded-full bg-white absolute top-1 transition-all", isDynamic ? "left-7" : "left-1")} />
+        <div className="pt-3 border-t border-gray-200 dark:border-gray-700 space-y-3">
+          <label className="flex items-center justify-between w-full cursor-pointer">
+            <span className="text-sm font-bold text-red-600 dark:text-red-400">Corrida Cancelada?</span>
+            <div className={cn("w-12 h-6 rounded-full transition-colors relative", isCancelled ? "bg-red-500" : "bg-gray-300 dark:bg-gray-600")}>
+              <div className={cn("w-4 h-4 rounded-full bg-white absolute top-1 transition-all", isCancelled ? "left-7" : "left-1")} />
             </div>
-            <input type="checkbox" className="hidden" checked={isDynamic} onChange={(e) => setIsDynamic(e.target.checked)} />
+            <input type="checkbox" className="hidden" checked={isCancelled} onChange={(e) => handleCancelToggle(e.target.checked)} />
           </label>
-          
-          {isDynamic && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="overflow-hidden">
-              <CurrencyInput label="Valor do Dinâmico (R$)" value={dynamicValueStr} onValueChange={setDynamicValueStr} />
-            </motion.div>
+
+          {!isCancelled && (
+            <>
+              <label className="flex items-center justify-between w-full cursor-pointer">
+                <span className="text-sm font-bold text-gray-700 dark:text-gray-300">Teve Tarifa Dinâmica?</span>
+                <div className={cn("w-12 h-6 rounded-full transition-colors relative", isDynamic ? "bg-teal-500" : "bg-gray-300 dark:bg-gray-600")}>
+                  <div className={cn("w-4 h-4 rounded-full bg-white absolute top-1 transition-all", isDynamic ? "left-7" : "left-1")} />
+                </div>
+                <input type="checkbox" className="hidden" checked={isDynamic} onChange={(e) => setIsDynamic(e.target.checked)} />
+              </label>
+              
+              {isDynamic && (
+                <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} className="overflow-hidden">
+                  <CurrencyInput label="Valor do Dinâmico (R$)" value={dynamicValueStr} onValueChange={setDynamicValueStr} />
+                </motion.div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -5367,7 +5754,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
           </Button>
         )}
         <Button 
-          disabled={isSubmitting || !valueStr || !durationStr}
+          disabled={isSubmitting || !valueStr}
           onClick={handleSave} 
           className="flex-1 py-4 shadow-lg"
         >
