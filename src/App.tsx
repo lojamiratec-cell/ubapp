@@ -75,7 +75,7 @@ const Button = ({
   title?: string
 }) => {
   const variants = {
-    primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-500/20",
+    primary: "bg-green-600 text-white hover:bg-green-700 shadow-lg shadow-green-500/20",
     secondary: "bg-gray-100 text-gray-900 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700",
     danger: "bg-red-500 text-white hover:bg-red-600 shadow-lg shadow-red-500/20",
     ghost: "bg-transparent text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800",
@@ -105,7 +105,7 @@ const Input = ({ label, ...props }: { label: string } & React.InputHTMLAttribute
     <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</label>
     <input 
       {...props}
-      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
+      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
     />
   </div>
 );
@@ -124,7 +124,7 @@ const CurrencyInput = ({ label, value, onValueChange, placeholder }: any) => (
       allowNegative={false}
       inputMode="decimal"
       placeholder={placeholder}
-      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
+      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
     />
   </div>
 );
@@ -142,7 +142,7 @@ const DistanceInput = ({ label, value, onValueChange, placeholder }: any) => (
       allowNegative={false}
       inputMode="decimal"
       placeholder={placeholder}
-      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
+      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-600"
     />
   </div>
 );
@@ -152,7 +152,7 @@ const Select = ({ label, options, ...props }: { label: string, options: string[]
     <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</label>
     <select 
       {...props}
-      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white"
+      className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-700 focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-500 transition-all bg-gray-50/50 dark:bg-gray-800/50 dark:text-white"
     >
       {options.map(opt => <option key={opt} value={opt} className="dark:bg-gray-900">{opt}</option>)}
     </select>
@@ -744,14 +744,19 @@ REGRAS CRÍTICAS:
       }
 
       const headers = [
-        'Data do Turno', 'Início do Turno', 'Fim do Turno', 'Faturamento do Turno (R$)', 'Tempo Ativo do Turno', 
+        'ID do Turno', 'Data do Turno', 'Início do Turno', 'Fim do Turno', 
+        'Faturamento do Turno (R$)', 'Tempo Ativo do Turno', 
         'KM Inicial do Turno', 'KM Final do Turno', 'KM Trabalho do Turno', 'KM Pessoal do Turno', 'Consumo (KM/L)',
-        'Data da Corrida', 'Hora da Corrida', 'Valor da Corrida (R$)', 'Duração da Corrida', 'Distância da Corrida (KM)'
+        'Total de Corridas no Turno', 'Tempo Desperdiçado/Parado',
+        '--- Dados da Corrida ---',
+        'ID da Corrida', 'Status', 'Valor da Corrida (R$)', 'Dinâmico Adicional (R$)',
+        'Data da Corrida', 'Hora da Corrida', 'Duração (Minutos)', 'Duração (Segundos)', 'Distância (KM)', 'Rentabilidade (R$/Hora)', 'Rentabilidade (R$/KM)'
       ];
 
       const rows: string[][] = [];
 
       shifts.forEach(s => {
+        const shiftId = s.id;
         const shiftDate = format(s.startTime?.toDate() || new Date(), 'dd/MM/yyyy');
         const shiftStart = format(s.startTime?.toDate() || new Date(), 'HH:mm');
         const shiftEnd = s.endTime ? format((s.endTime?.toDate() || new Date()), 'HH:mm') : '--';
@@ -762,25 +767,37 @@ REGRAS CRÍTICAS:
         const shiftWorkKm = s.totalWorkKm?.toFixed(1) || '--';
         const shiftPersonalKm = s.totalPersonalKm?.toFixed(1) || '--';
         const shiftCons = s.avgConsumption?.toFixed(1) || '--';
+        const totalTripsStr = s.totalTrips.toString();
+        
+        const totalRawSecs = s.endTime ? differenceInSeconds(s.endTime.toDate(), s.startTime?.toDate() || new Date()) : 0;
+        const wastedSecs = Math.max(0, totalRawSecs - s.activeTimeSeconds);
+        const wastedStr = formatTime(wastedSecs);
 
         const trips = allTrips[s.id] || [];
         
         if (trips.length === 0) {
           rows.push([
-            shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
-            shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons,
-            '--', '--', '--', '--', '--'
+            shiftId, shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
+            shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons, totalTripsStr, wastedStr,
+            '', // separator
+            '--', '--', '--', '--', '--', '--', '--', '--', '--', '--', '--'
           ]);
         } else {
           trips.forEach(t => {
+            const isCancelled = t.isCancelled ? 'Cancelada' : 'Concluída';
+            const dynamicVal = t.dynamicValue ? t.dynamicValue.toFixed(2) : '0.00';
+            const mins = (t.durationSeconds / 60).toFixed(1);
+            const rph = t.durationSeconds > 0 ? (t.value / (t.durationSeconds / 3600)).toFixed(2) : '0.00';
+            const rpkm = t.distanceKm && t.distanceKm > 0 ? (t.value / t.distanceKm).toFixed(2) : '0.00';
+            
             rows.push([
-              shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
-              shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons,
+              shiftId, shiftDate, shiftStart, shiftEnd, shiftRev, shiftTime, 
+              shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons, totalTripsStr, wastedStr,
+              '', // separator
+              t.id, isCancelled, t.value.toFixed(2), dynamicVal,
               format(t.timestamp?.toDate() || new Date(), 'dd/MM/yyyy'),
-              format(t.timestamp?.toDate() || new Date(), 'HH:mm'),
-              t.value.toFixed(2),
-              formatTime(t.durationSeconds),
-              t.distanceKm.toFixed(1)
+              format(t.timestamp?.toDate() || t.startTime?.toDate() || new Date(), 'HH:mm'),
+              mins, t.durationSeconds.toString(), (t.distanceKm || 0).toFixed(1), rph, rpkm
             ]);
           });
         }
@@ -1462,7 +1479,7 @@ REGRAS CRÍTICAS:
         const durationDiff = newTotalDuration - oldTotalDuration;
         
         if (durationDiff !== 0) {
-          updates.activeTimeSeconds = newTotalDuration;
+          updates.activeTimeSeconds = Math.max(0, (existing.activeTimeSeconds || oldTotalDuration) + durationDiff);
         }
       }
       
@@ -2595,7 +2612,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
       </div>
     );
   }
@@ -2604,20 +2621,20 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
     return (
       <div className="min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-6 text-center transition-colors relative overflow-hidden">
         {/* Background Decorations */}
-        <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-blue-500/10 dark:bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-blue-500/10 dark:bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-[-10%] left-[-10%] w-96 h-96 bg-green-500/10 dark:bg-green-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-green-500/10 dark:bg-green-500/5 rounded-full blur-3xl pointer-events-none" />
 
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="max-w-md w-full relative z-10"
         >
-          <div className="bg-gradient-to-br from-blue-500 to-blue-700 w-24 h-24 rounded-[32px] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-blue-500/30 dark:shadow-blue-900/40 rotate-3 hover:rotate-0 transition-transform duration-500">
+          <div className="bg-gradient-to-br from-green-500 to-green-700 w-24 h-24 rounded-[32px] flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-green-500/30 dark:shadow-green-900/40 rotate-3 hover:rotate-0 transition-transform duration-500">
             <Car className="text-white" size={48} strokeWidth={1.5} />
           </div>
           
           <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-white mb-4 tracking-tight">
-            Driver<span className="text-blue-600 dark:text-blue-500">Ops</span>
+            Driver<span className="text-green-600 dark:text-green-500">Ops</span>
           </h1>
           
           <p className="text-gray-500 dark:text-gray-400 mb-10 text-lg leading-relaxed max-w-sm mx-auto">
@@ -2632,8 +2649,8 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               <p className="text-sm font-medium dark:text-gray-300">Acompanhe seus lucros reais</p>
             </div>
             <div className="flex items-center gap-3">
-              <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-lg">
-                <Timer size={18} className="text-blue-600 dark:text-blue-400" />
+              <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-lg">
+                <Timer size={18} className="text-green-600 dark:text-green-400" />
               </div>
               <p className="text-sm font-medium dark:text-gray-300">Controle o tempo de trabalho</p>
             </div>
@@ -2658,7 +2675,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
             />
             {authError && <p className="text-red-500 text-sm font-medium text-center">{authError}</p>}
             
-            <Button type="submit" className="w-full py-4 text-lg font-bold shadow-xl shadow-blue-200 dark:shadow-blue-900/20 rounded-2xl">
+            <Button type="submit" className="w-full py-4 text-lg font-bold shadow-xl shadow-green-200 dark:shadow-green-900/20 rounded-2xl">
               {isLoginMode ? 'Entrar' : 'Criar Conta'}
             </Button>
           </form>
@@ -2668,7 +2685,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               setIsLoginMode(!isLoginMode);
               setAuthError('');
             }} 
-            className="text-sm text-blue-600 dark:text-blue-400 font-medium mb-6 hover:underline"
+            className="text-sm text-green-600 dark:text-green-400 font-medium mb-6 hover:underline"
           >
             {isLoginMode ? 'Não tem uma conta? Crie agora' : 'Já tem uma conta? Entre aqui'}
           </button>
@@ -2705,22 +2722,26 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-24 font-sans text-gray-900 dark:text-gray-100 transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 px-4 sm:px-6 py-4 sticky top-0 z-30 flex items-center justify-between transition-colors">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="bg-blue-600 p-1.5 sm:p-2 rounded-xl">
-            <Car className="text-white" size={18} />
-          </div>
-          <div>
-            <span className="font-bold text-lg sm:text-xl tracking-tight block leading-tight">Driver Lucrativo</span>
-            <span className="text-[9px] sm:text-[10px] text-gray-400 dark:text-gray-500 font-mono uppercase tracking-widest">
-              {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
-            </span>
+      <header className="bg-white dark:bg-[#111827] border-b border-gray-100 dark:border-gray-800 px-4 sm:px-6 py-3 sticky top-0 z-30 flex items-center justify-between transition-colors relative">
+        <div className="flex items-center gap-2 sm:gap-3 z-10">
+          <div className="bg-green-600 p-1.5 sm:p-2 rounded-xl">
+            <Car className="text-white" size={20} />
           </div>
         </div>
-        <div className="flex items-center gap-1 sm:gap-2">
+
+        <div className="absolute left-1/2 -translate-x-1/2 flex flex-col items-center justify-center w-[60%] pointer-events-none z-0">
+          <span className="font-black text-2xl sm:text-3xl tracking-tighter text-gray-900 dark:text-white uppercase leading-none">
+            Driver<span className="text-green-500">Lucrativo</span>
+          </span>
+          <span className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 font-bold tracking-widest mt-1 uppercase">
+            {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1 sm:gap-2 z-10">
           <button 
             onClick={() => setDarkMode(!darkMode)} 
-            className="p-1.5 sm:p-2 text-gray-400 hover:text-blue-500 transition-colors"
+            className="p-1.5 sm:p-2 text-gray-400 hover:text-green-500 transition-colors"
           >
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
           </button>
@@ -2740,90 +2761,104 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              <div className="grid grid-cols-1 gap-4">
+              <div className="space-y-5">
                 {!activeShift ? (
-                  <>
-                    <Button onClick={() => setShowStartModal(true)} className="py-6 text-lg" icon={Play}>
+                  <div className="grid grid-cols-1 gap-3">
+                    <Button onClick={() => setShowStartModal(true)} className="py-7 text-xl font-black tracking-wide uppercase bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] border-none rounded-2xl" icon={Play}>
                       Iniciar Turno
                     </Button>
-                    <Button onClick={() => setShowPastShiftModal(true)} variant="outline" className="py-4" icon={Calendar}>
+                    <Button onClick={() => setShowPastShiftModal(true)} variant="outline" className="py-5 font-bold uppercase tracking-wider text-xs border-[#1F2937] text-gray-400 hover:text-white hover:bg-white/5 rounded-2xl" icon={Calendar}>
                       Registrar Turno Passado
                     </Button>
-                  </>
+                  </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-2 gap-3">
                     {activeShift.status === 'active' ? (
-                      <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-6" icon={Pause}>
+                      <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-5 font-bold uppercase tracking-wider text-xs bg-[#1F2937] hover:bg-gray-700 text-white border-none rounded-2xl" icon={Pause}>
                         Pausar
                       </Button>
                     ) : (
-                      <Button onClick={() => setShowResumeModal(true)} variant="primary" className="py-6" icon={Play}>
+                      <Button onClick={() => setShowResumeModal(true)} className="py-5 font-bold uppercase tracking-wider text-xs bg-green-600 hover:bg-green-500 text-white border-none rounded-2xl" icon={Play}>
                         Retomar
                       </Button>
                     )}
-                    <Button onClick={() => setShowFinishModal(true)} variant="danger" className="py-6" icon={Square}>
+                    <Button onClick={() => setShowFinishModal(true)} variant="danger" className="py-5 font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-500 text-white border-none shadow-[0_0_15px_rgba(239,68,68,0.3)] rounded-2xl" icon={Square}>
                       Finalizar
                     </Button>
                   </div>
                 )}
               </div>
 
-              <Card className={cn(
-                "relative overflow-hidden transition-all duration-500",
-                activeShift?.status === 'active' ? "bg-blue-600 text-white" : "bg-white dark:bg-gray-900"
+              <div className={cn(
+                "relative overflow-hidden rounded-3xl transition-all duration-500 border p-6",
+                activeShift?.status === 'active' 
+                  ? "bg-gradient-to-b from-[#0B0F14] to-[#111827] border-green-500/20 shadow-[0_0_40px_rgba(37,99,235,0.05)]" 
+                  : "bg-white dark:bg-[#0B0F14] border-gray-200 dark:border-[#1F2937]"
               )}>
-                <div className="flex justify-between items-start mb-8">
+                {activeShift?.status === 'active' && (
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/10 blur-3xl rounded-full" />
+                )}
+                
+                <div className="flex justify-between items-start mb-6 relative z-10">
                   <div>
-                    <h2 className={cn("text-sm font-bold uppercase tracking-widest opacity-70", activeShift?.status === 'active' ? "text-blue-100" : "text-gray-400 dark:text-gray-500")}>
-                      Status do Turno
-                    </h2>
-                    <p className="text-2xl font-bold mt-1 dark:text-white">
-                      {activeShift ? (activeShift.status === 'active' ? 'Em Operação' : 'Pausado') : 'Offline'}
+                    <div className="flex items-center gap-2 mb-1">
+                      {activeShift?.status === 'active' && (
+                        <span className="flex w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
+                      )}
+                      <h2 className="text-[11px] font-black uppercase tracking-widest text-gray-500">
+                        Status da Operação
+                      </h2>
+                    </div>
+                    <p className={cn("text-2xl font-black mt-1", activeShift?.status === 'active' ? "text-white" : "text-gray-900 dark:text-gray-400")}>
+                      {activeShift ? (activeShift.status === 'active' ? 'Em Andamento' : 'Pausado') : 'Offline'}
                     </p>
                   </div>
-                  <div className={cn("p-3 rounded-2xl", activeShift?.status === 'active' ? "bg-white/20" : "bg-gray-100 dark:bg-gray-800")}>
-                    <Timer size={24} className={activeShift?.status === 'active' ? "text-white" : "text-gray-400 dark:text-gray-500"} />
+                  <div className={cn("p-3.5 rounded-2xl shadow-sm border", activeShift?.status === 'active' ? "bg-white/5 border-white/10 backdrop-blur-md text-green-400" : "bg-gray-100 dark:bg-[#1F2937] border-transparent text-gray-400")}>
+                    <Timer size={24} />
                   </div>
                 </div>
 
-                <div className="text-center py-6">
-                  <div className="text-6xl font-mono font-bold tracking-tighter mb-2 dark:text-white">
+                <div className="text-center py-5 relative z-10">
+                  <div className={cn(
+                    "text-5xl sm:text-6xl leading-none font-mono font-black tracking-tighter mb-2",
+                    activeShift?.status === 'active' ? "text-transparent bg-clip-text bg-gradient-to-b from-white to-gray-400 drop-shadow-sm" : "text-gray-900 dark:text-white"
+                  )}>
                     {formatTime(elapsedTime)}
                   </div>
-                  <p className="text-sm opacity-70 font-medium dark:text-gray-400">Tempo Efetivo de Trabalho</p>
+                  <p className="text-xs uppercase tracking-widest font-bold text-gray-400">Tempo Ativo de Direção</p>
                 </div>
 
                 {activeShift?.status === 'active' && (
-                  <div className="mt-8">
+                  <div className="mt-8 relative z-10">
                     <Button 
                       onClick={() => setShowQuickTripModal(true)} 
                       variant="outline"
-                      className="w-full py-6 border-none transition-all duration-300 bg-blue-600 text-white shadow-[0_0_20px_rgba(37,99,235,0.6)] hover:bg-blue-500 scale-100" 
+                      className="w-full py-7 text-lg font-black tracking-wide uppercase border border-green-500/30 transition-all duration-300 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-2xl shadow-[0_0_20px_rgba(34,197,94,0.15)] hover:shadow-[0_0_30px_rgba(34,197,94,0.4)]" 
                       icon={Plus}
                     >
-                      Registrar Nova Corrida
+                      Nova Corrida
                     </Button>
 
-                    <div className="mt-6 space-y-4">
-                       <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Estado de Produtividade</h3>
-                       <div className="grid grid-cols-3 gap-2">
+                    <div className="mt-8 space-y-4">
+                       <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Telemetria de Estado</h3>
+                       <div className="bg-black/20 p-1.5 rounded-2xl flex gap-1 border border-white/5">
                           {[
-                            { id: 'idle', label: 'Parado', icon: Coffee, color: 'text-gray-500', activeBg: 'bg-gray-100 dark:bg-gray-800' },
-                            { id: 'dispatch', label: 'Buscando', icon: Compass, color: 'text-blue-500', activeBg: 'bg-blue-50 dark:bg-blue-900/40' },
-                            { id: 'ride', label: 'Corrida', icon: Users, color: 'text-green-500', activeBg: 'bg-green-50 dark:bg-green-900/40' }
+                            { id: 'idle', label: 'Parado', icon: Coffee, activeColor: 'text-gray-300', activeBg: 'bg-[#1F2937] shadow-lg border-gray-600/50' },
+                            { id: 'dispatch', label: 'Buscando', icon: Compass, activeColor: 'text-green-400', activeBg: 'bg-green-500/20 shadow-lg border-green-500/30' },
+                            { id: 'ride', label: 'Corrida', icon: Users, activeColor: 'text-green-400', activeBg: 'bg-green-500/20 shadow-lg border-green-500/30' }
                           ].map((state) => (
                             <button
                               key={state.id}
                               onClick={() => changeShiftState(state.id as any)}
                               className={cn(
-                                "flex flex-col items-center justify-center p-3 rounded-2xl border transition-all duration-300",
+                                "flex-1 flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-300",
                                 activeShift.currentState === state.id 
-                                  ? cn("border-transparent shadow-sm", state.activeBg)
-                                  : "bg-white dark:bg-gray-900 border-gray-100 dark:border-gray-800 opacity-60 grayscale hover:grayscale-0 hover:opacity-100"
+                                  ? state.activeBg
+                                  : "border-transparent opacity-50 hover:bg-white/5 hover:opacity-100"
                               )}
                             >
-                               <state.icon size={20} className={cn("mb-2", activeShift.currentState === state.id ? state.color : "text-gray-400")} />
-                               <span className={cn("text-[10px] font-black uppercase tracking-tight", activeShift.currentState === state.id ? state.color : "text-gray-400")}>
+                               <state.icon size={20} className={cn("mb-1.5", activeShift.currentState === state.id ? state.activeColor : "text-gray-500")} />
+                               <span className={cn("text-[9px] font-black uppercase tracking-widest", activeShift.currentState === state.id ? state.activeColor : "text-gray-500")}>
                                  {state.label}
                                </span>
                             </button>
@@ -2834,52 +2869,57 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                 )}
 
                 {activeShift?.status === 'active' && (
-                  <div className="grid grid-cols-2 gap-3 mt-4">
+                  <div className="grid grid-cols-2 gap-3 mt-6 relative z-10 pt-6 border-t border-white/10">
                     <Button 
                       onClick={() => setShowPartialRevenueModal(true)} 
                       variant="outline" 
                       className={cn(
-                        "w-full py-4 text-xs sm:text-sm transition-all duration-500",
+                        "w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-500",
                         elapsedTime >= 3600 && (elapsedTime % 3600) < 300 
-                          ? "animate-pulse-red shadow-[0_0_15px_rgba(239,68,68,0.5)] z-10" 
-                          : "bg-white/10 text-white/90 border-white/20 hover:bg-white/20"
+                          ? "animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)] border-red-500/50 bg-red-500/10 text-red-400" 
+                          : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
                       )}
+                      icon={Wallet}
                     >
-                      Ganhos (parcial)
+                      Caixa Parcial
                     </Button>
                     <Button 
                       onClick={() => generateRealtimeAiAnalysis()} 
                       variant="outline" 
-                      className="w-full py-4 bg-white/10 text-white/90 border-white/20 hover:bg-white/20 text-xs sm:text-sm"
+                      className="w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white shadow-[0_0_15px_rgba(37,99,235,0.1)] transition-all"
                       icon={Sparkles}
                     >
-                      IA: Devo Continuar?
+                      Copiloto IA
                     </Button>
                   </div>
                 )}
-              </Card>
+              </div>
 
               {settings && planningMetrics && (
-                <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-                  <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 text-center uppercase tracking-widest mb-6">Meta Diária</h3>
+                <div className="bg-white dark:bg-[#0B0F14] rounded-3xl p-6 border border-gray-200 dark:border-[#1F2937] shadow-sm">
+                  <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Meta Diária Agressiva</h3>
                   
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     <div className="flex justify-between items-end mb-2">
                       <div>
-                        <p className="text-3xl font-black text-gray-900 dark:text-white leading-none">{Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-xl text-gray-400">%</span></p>
+                        <p className={cn("text-4xl font-black leading-none", (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 ? "text-green-500 drop-shadow-[0_0_10px_rgba(34,197,94,0.4)]" : "text-gray-900 dark:text-white")}>
+                          {Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-xl text-gray-400 ml-1">%</span>
+                        </p>
                       </div>
                       <div className="text-right">
-                        <p className="text-xs font-bold text-gray-500 uppercase">Progresso</p>
-                        <p className="font-bold text-gray-900 dark:text-white">R$ {todayMetrics.totalRevenue.toFixed(2)} / <span className="text-gray-400">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span></p>
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Progresso Real</p>
+                        <p className="font-bold text-sm text-gray-900 dark:text-white">
+                          <span className="text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</span> / <span className="text-gray-400">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span>
+                        </p>
                       </div>
                     </div>
                     
-                    <div className="relative pt-2 pb-2">
-                       <div className="h-10 rounded-full bg-gray-100 dark:bg-gray-800 w-full overflow-hidden relative border border-gray-200 dark:border-gray-700 shadow-inner">
+                    <div className="relative pt-1 pb-1">
+                       <div className="h-6 rounded-full bg-gray-100 dark:bg-[#1F2937] w-full overflow-hidden relative border border-gray-200 dark:border-gray-800">
                          {/* Track Grid */}
                          <div className="absolute inset-0 w-full flex pointer-events-none">
                             {[25, 50, 75].map(mark => (
-                              <div key={mark} className="flex-1 border-r border-gray-300 dark:border-gray-600 opacity-40 z-10 last:border-0" />
+                              <div key={mark} className="flex-1 border-r border-gray-300 dark:border-gray-700/50 opacity-40 z-10 last:border-0" />
                             ))}
                          </div>
                          
@@ -2889,92 +2929,79 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                            animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%` }}
                            transition={{ duration: 1, type: "spring", stiffness: 50 }}
                            className={cn(
-                             "h-full absolute left-0 top-0 bottom-0 z-10 transition-colors duration-500", 
+                             "h-full absolute left-0 top-0 bottom-0 z-10 transition-colors duration-500 rounded-full", 
                              (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 
-                               ? "bg-green-500" 
+                               ? "bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]" 
                                : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.75
-                               ? "bg-sky-500"
+                               ? "bg-green-400"
                                : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.5
                                ? "bg-yellow-500"
-                               : "bg-blue-600"
+                               : "bg-green-500"
                            )}
                          >
-                            <div className="absolute inset-0 bg-white/20" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
-                         </motion.div>
-
-                         {/* End Flag */}
-                         <div className="absolute right-3 top-0 bottom-0 flex items-center justify-center z-10">
-                           <span className="text-xl drop-shadow opacity-90 grayscale">🏁</span>
-                         </div>
-                         
-                         {/* The moving car inside the bar bounds */}
-                         <motion.div 
-                           initial={{ left: '0%', x: '0%' }}
-                           animate={{ 
-                             left: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%`,
-                             x: `-${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%`
-                           }}
-                           transition={{ duration: 1, type: "spring", stiffness: 50 }}
-                           className="absolute top-0 bottom-0 flex items-center justify-center z-20 px-1 drop-shadow-md"
-                         >
-                           <span className="text-3xl block" style={{ transform: 'scaleX(-1) translateY(1px)' }}>🚕</span>
+                            <div className="absolute inset-0 bg-white/30" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
                          </motion.div>
                        </div>
                     </div>
                     
-                    <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-xl mt-4">
-                      <p className="text-xs text-blue-800 dark:text-blue-300 font-medium leading-relaxed">
-                        Faltam <span className="font-bold">R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para bater a meta de R$ {planningMetrics.dailyNeeded.toFixed(2)}. 
+                    <div className="bg-green-50 dark:bg-[#1F2937] p-4 rounded-2xl border border-transparent dark:border-gray-800">
+                      <p className="text-[11px] text-green-800 dark:text-gray-300 font-medium leading-relaxed uppercase tracking-wide">
+                        <span className="text-green-600 dark:text-green-400 font-black">Faltam R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para o green. 
                         {todayMetrics.totalTime > 0 && todayMetrics.totalRevenue > 0 ? (
-                           <> Com base no seu R$/hora atual (R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h), mais <span className="font-bold">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span> trabalhando sua meta é atingida.</>
-                        ) : ' Faça algumas corridas para analisarmos a precisão e tempo de término.'}
+                           <> No ritmo atual de <span className="text-white font-bold bg-green-500/20 px-1 py-0.5 rounded">R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h</span>, meta atingida em <span className="font-black text-white">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span>.</>
+                        ) : ' Inicie o trajeto para prever ETA de lucro.'}
                       </p>
                     </div>
                   </div>
-                </Card>
+                </div>
               )}
 
               {/* Resumo do Dia */}
-              <Card className="bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800">
-                <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-4">Resumo de Hoje</h3>
-                <div className="grid grid-cols-2 gap-4">
+              <div className="bg-white dark:bg-[#0B0F14] rounded-3xl p-6 border border-gray-200 dark:border-[#1F2937] shadow-sm space-y-6">
+                <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">Desempenho Real (Dia)</h3>
+                
+                <div className="grid grid-cols-2 gap-x-4 gap-y-6">
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Ganhos do Dia</p>
-                    <p className="text-lg font-bold text-green-600 dark:text-green-400">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Ganhos do Dia</p>
+                     <p className="text-xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Tempo Total</p>
-                    <p className="text-lg font-bold dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Tempo Total</p>
+                     <p className="text-xl font-black text-gray-900 dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
+                  </div>
+                  <div className="col-span-2 h-px bg-gray-100 dark:bg-gray-800/50" />
+                  <div>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$ / Hora Atual</p>
+                     <p className={cn("text-xl font-black", todayMetrics.totalTime > 0 && (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) >= 30 ? "text-green-500" : "text-gray-900 dark:text-white")}>
+                       R$ {todayMetrics.totalTime > 0 ? (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2) : '0.00'}
+                     </p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">R$ / Hora Atual</p>
-                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalTime > 0 ? (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2) : '0.00'}</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$ / KM Parcial</p>
+                     <p className="text-xl font-black text-green-600 dark:text-green-400">R$ {todayMetrics.totalWorkKm > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalWorkKm).toFixed(2) : '0.00'}</p>
+                  </div>
+                  <div className="col-span-2 h-px bg-gray-100 dark:bg-gray-800/50" />
+                  <div>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Users size={12} />Corridas</p>
+                     <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.totalTrips}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Corridas Feitas</p>
-                    <p className="text-lg font-bold dark:text-white">{todayMetrics.totalTrips}</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Target size={12} />KM Atual Turno</p>
+                     <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Atual do Turno</p>
-                    <p className="text-lg font-bold dark:text-white">{todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Navigation size={12} />KM Diário Inicial</p>
+                     <p className="text-xl font-bold text-gray-500">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">KM Inicial (Hoje)</p>
-                    <p className="text-lg font-bold dark:text-white">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">Total Rodado Hoje</p>
-                    <p className="text-lg font-bold text-indigo-600 dark:text-indigo-400">{todayMetrics.totalKmDrivenToday.toFixed(1)} km</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">R$ / KM Parcial</p>
-                    <p className="text-lg font-bold text-blue-600 dark:text-blue-400">R$ {todayMetrics.totalWorkKm > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalWorkKm).toFixed(2) : '0.00'}</p>
+                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingUp size={12} />Total Rodado Hoje</p>
+                     <p className="text-xl font-black text-indigo-600 dark:text-indigo-400">{todayMetrics.totalKmDrivenToday.toFixed(1)} km</p>
                   </div>
                 </div>
-              </Card>
+              </div>
 
               {activeShift?.status === 'active' && (
-                <Button onClick={() => setShowShiftFuelModal(true)} variant="outline" className="w-full py-6 bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800" icon={FuelIcon}>
+                <Button onClick={() => setShowShiftFuelModal(true)} variant="outline" className="w-full py-6 font-bold uppercase tracking-wider text-xs bg-white dark:bg-[#0B0F14] border-gray-200 dark:border-[#1F2937] text-gray-500 dark:text-gray-400 hover:text-white hover:bg-gray-800 rounded-2xl transition-all" icon={FuelIcon}>
                   Abastecer no Turno
                 </Button>
               )}
@@ -3041,7 +3068,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                         setAnalysisQuery('Devo continuar rodando agora? Faça uma análise de custo/benefício rápida (max 200 caracteres), estou rodando agora.');
                         handleHistoryAIAnalysis();
                     }}
-                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-200 dark:shadow-none transition-all group overflow-hidden relative flex items-center justify-center gap-2"
+                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-green-600 to-indigo-600 hover:from-green-700 hover:to-indigo-700 text-white shadow-xl shadow-green-200 dark:shadow-none transition-all group overflow-hidden relative flex items-center justify-center gap-2"
                   >
                     <Sparkles size={18} />
                     <span>IA: Devo Continuar?</span>
@@ -3056,81 +3083,85 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               key="history"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="space-y-4"
+              className="space-y-6"
             >
-              <div className="flex flex-col gap-4 mb-6">
+              <div className="flex flex-col gap-6 mb-6">
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-                  <h2 className="text-2xl font-bold dark:text-white">Histórico</h2>
+                  <h2 className="text-2xl font-black dark:text-white uppercase tracking-wider">Histórico</h2>
                   <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
+                    <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-white dark:bg-[#111827]">
                       Importar
                     </Button>
-                    <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">
-                      {isExporting ? 'Exportando...' : 'Exportar'}
+                    <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-white dark:bg-[#111827]">
+                      {isExporting ? 'Exportando...' : 'Exportar CSV'}
                     </Button>
-                    <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} variant="outline" className="py-2 px-3 text-sm flex-1 sm:flex-none justify-center">Registrar</Button>
+                    <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl bg-green-600 hover:bg-green-500 text-white shadow-sm border-none">Registrar</Button>
                   </div>
                 </div>
                 
-                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center">
-                  <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
-                    <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'week' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Semana</button>
-                    <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all", historyFilter === 'month' ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>Mês</button>
+                <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+                  <div className="flex bg-gray-100 dark:bg-gray-800/50 p-1.5 rounded-[20px] w-full sm:w-auto border border-gray-200/50 dark:border-gray-700/50">
+                    <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", historyFilter === 'week' ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}>Semana</button>
+                    <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", historyFilter === 'month' ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}>Mês</button>
                   </div>
 
-                  <div className="flex items-center justify-between sm:justify-start gap-4 bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
-                    <button 
-                      onClick={prevHistoryRange}
-                      className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
-                    >
-                      <ChevronLeft size={18} />
-                    </button>
-                    <div className="text-center min-w-[120px]">
-                      <p className="text-[9px] font-black text-gray-500 uppercase tracking-widest leading-none mb-0.5">{historyRangeLabel.type}</p>
-                      <p className="text-xs font-bold dark:text-white capitalize">{historyRangeLabel.label}</p>
+                  {historyFilter !== 'all' && (
+                    <div className="flex items-center justify-between sm:justify-start gap-4 bg-white dark:bg-gray-800/50 p-1.5 rounded-[20px] border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
+                      <button 
+                        onClick={prevHistoryRange}
+                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      <div className="text-center min-w-[140px]">
+                        <p className="text-[9px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">{historyRangeLabel.type}</p>
+                        <p className="text-xs font-bold text-gray-900 dark:text-gray-100 capitalize truncate">{historyRangeLabel.label}</p>
+                      </div>
+                      <button 
+                        onClick={nextHistoryRange}
+                        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
+                      >
+                        <ChevronRight size={18} />
+                      </button>
                     </div>
-                    <button 
-                      onClick={nextHistoryRange}
-                      className="p-1.5 hover:bg-white dark:hover:bg-gray-700 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all shadow-none hover:shadow-sm"
-                    >
-                      <ChevronRight size={18} />
-                    </button>
-                  </div>
+                  )}
                   
-                  <div className="flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-xl w-full sm:w-auto">
-                     <button onClick={() => setHistoryPendingOnly(!historyPendingOnly)} className={cn("flex-1 flex gap-2 items-center justify-center py-2 px-4 text-sm font-medium rounded-lg transition-all", historyPendingOnly ? "bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 shadow-sm border border-red-100 dark:border-red-900" : "text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600")}>
-                        <AlertCircle size={16} /> Pendentes
+                  <div className="flex items-center space-x-2 w-full sm:w-auto">
+                     <button onClick={() => setHistoryPendingOnly(!historyPendingOnly)} className={cn("flex-1 flex gap-2 items-center justify-center py-3.5 px-6 text-xs font-black uppercase tracking-widest rounded-[20px] transition-all duration-300 border", historyPendingOnly ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]" : "bg-white dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 border-gray-200/50 dark:border-gray-700/50 hover:text-gray-800 dark:hover:text-gray-200 shadow-sm")}>
+                        <AlertCircle size={16} className={cn(historyPendingOnly ? "text-red-500 dark:text-red-400" : "")} />
+                        Pendentes
                      </button>
                   </div>
                 </div>
 
                 {shifts.length > 0 && (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl border border-blue-100 dark:border-blue-900/30">
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Faturamento</p>
-                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 bg-[#0B0B0C] dark:bg-[#111827]/80 rounded-[24px] border border-gray-800/80 shadow-2xl relative overflow-hidden">
+                    <div className="absolute inset-0 bg-gradient-to-br from-[#22C55E]/5 to-transparent pointer-events-none" />
+                    <div className="relative z-10">
+                      <p className="text-[9px] uppercase font-black text-[#22C55E] tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Total Faturado</p>
+                      <p className="text-2xl lg:text-3xl font-black text-white tracking-tighter">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Tempo Total</p>
-                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">
-                        {Math.floor(historySummary.totalTime / 3600)}h {Math.floor((historySummary.totalTime % 3600) / 60)}m
+                    <div className="relative z-10">
+                      <p className="text-[9px] uppercase font-black text-gray-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Horas Direção</p>
+                      <p className="text-2xl font-bold text-gray-200 tracking-tighter">
+                        {Math.floor(historySummary.totalTime / 3600)}<span className="text-sm font-medium text-gray-500 mx-0.5">h</span>{Math.floor((historySummary.totalTime % 3600) / 60)}<span className="text-sm font-medium text-gray-500 ml-0.5">m</span>
                       </p>
                     </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Média R$/Hora</p>
-                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.rph.toFixed(2)}</p>
+                    <div className="relative z-10">
+                      <p className="text-[9px] uppercase font-black text-emerald-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$/Hora Médio</p>
+                      <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-emerald-400">R$ {historySummary.rph.toFixed(2)}</span> /h</p>
                     </div>
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-blue-600 dark:text-blue-400 opacity-70 mb-0.5">Média R$/KM</p>
-                      <p className="text-lg font-bold text-blue-700 dark:text-blue-200 tracking-tight">R$ {historySummary.rpkm.toFixed(2)}</p>
+                    <div className="relative z-10">
+                      <p className="text-[9px] uppercase font-black text-indigo-400 tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$/KM Médio</p>
+                      <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-indigo-400">R$ {historySummary.rpkm.toFixed(2)}</span> /km</p>
                     </div>
                   </div>
                 )}
               </div>
               {shifts.length === 0 ? (
-                <div className="text-center py-20 text-gray-400">
+                <div className="text-center py-20 text-gray-400 bg-white dark:bg-[#111827] rounded-3xl border border-gray-100 dark:border-gray-800">
                   <History size={48} className="mx-auto mb-4 opacity-20" />
-                  <p>Nenhum turno registrado ainda.</p>
+                  <p className="font-medium text-sm">Nenhum histórico registrado no período.</p>
                 </div>
               ) : (
                 groupedShifts.map(group => {
@@ -3159,29 +3190,38 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                   }
 
                   return (
-                    <div key={dateKey} className="space-y-3 mb-8">
+                    <div key={dateKey} className="mb-4">
                       <div 
-                        className="flex justify-between items-end mb-2 px-1 cursor-pointer group"
+                        className={cn("bg-white dark:bg-[#1a2133]/90 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-gray-100 dark:border-gray-800/60 rounded-[28px] overflow-hidden cursor-pointer transition-all duration-400 group", isExpanded ? "ring-2 ring-[#22C55E]/20" : "hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] hover:border-gray-200 dark:hover:border-gray-700")}
                         onClick={() => toggleDay(dateKey)}
                       >
-                        <div>
-                          <div className="flex items-center gap-2.5">
-                            {dayTripStatusColor && (
-                              <div className={cn("w-1.5 h-5 rounded-full shrink-0", dayTripStatusColor)} title={dayTripStatusTitle} />
-                            )}
-                            <p className="text-lg font-bold dark:text-white capitalize flex items-center gap-2">
-                              {format(group.date, "EEEE, d 'de' MMMM", { locale: ptBR })}
-                              <ChevronRight size={16} className={cn("text-gray-400 transition-transform", isExpanded && "rotate-90")} />
-                            </p>
+                        <div className="p-5 sm:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                          <div className="flex items-center gap-4 w-full">
+                            <div className={cn("w-2 h-16 rounded-full shrink-0 shadow-sm", dayTripStatusColor || 'bg-green-500/30')} title={dayTripStatusTitle} />
+                            <div className="flex-1">
+                              <p className="text-xl sm:text-2xl font-black dark:text-white capitalize flex items-center gap-2 mb-1">
+                                {format(group.date, "EEEE, d", { locale: ptBR })} 
+                                <span className="text-gray-400 dark:text-gray-500 font-bold text-sm tracking-widest uppercase">
+                                  {format(group.date, "MMMM", { locale: ptBR })}
+                                </span>
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-4 gap-y-2">
+                                <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/60 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-gray-500 dark:text-gray-400">
+                                  <Clock size={12} /> {formatTime(group.totalTime)}
+                                </div>
+                                <div className="flex items-center gap-1.5 bg-green-50 dark:bg-[#22C55E]/10 border border-green-100 dark:border-[#22C55E]/20 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-green-600 dark:text-[#22C55E]">
+                                  <DollarSign size={12} /> R$ {group.totalRevenue.toFixed(2)}
+                                </div>
+                                <div className="flex items-center gap-1.5 text-[11px] font-black tracking-widest uppercase text-gray-500 dark:text-gray-400 pl-1 sm:border-l sm:pl-3 border-gray-200 dark:border-gray-700">
+                                  <TrendingUp size={12} className="text-emerald-500" /> R$ {rph.toFixed(2)}/h
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400 font-medium mt-1">
-                            <span className="flex items-center gap-1"><Clock size={14} /> {formatTime(group.totalTime)}</span>
-                            <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
-                            <span className="flex items-center gap-1 text-green-600 dark:text-green-400"><DollarSign size={14} /> R$ {group.totalRevenue.toFixed(2)}</span>
-                            <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full hidden sm:block" />
-                            <span className="flex items-center gap-1"><TrendingUp size={14} /> R$ {rph.toFixed(2)}/h</span>
-                            <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full hidden sm:block" />
-                            <span className="flex items-center gap-1"><MapPin size={14} /> R$ {rpkm.toFixed(2)}/km</span>
+                          <div className="w-full sm:w-auto flex justify-end">
+                            <div className={cn("p-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 transition-transform duration-500 ease-in-out", isExpanded && "rotate-180 bg-green-50 dark:bg-green-900/20")}>
+                              <ChevronRight size={20} className={cn("text-gray-400 transition-colors", isExpanded && "text-[#22C55E]")} />
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -3192,7 +3232,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                             initial={{ height: 0, opacity: 0 }}
                             animate={{ height: 'auto', opacity: 1 }}
                             exit={{ height: 0, opacity: 0 }}
-                            className="space-y-3 overflow-hidden px-1"
+                            className="space-y-4 overflow-hidden pt-4 px-2"
                           >
                             {group.shifts.map((shift, index) => {
                               const shiftTripsCount = (shiftTrips[shift.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length;
@@ -3215,75 +3255,70 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                               }
 
                               return (
-                              <Card key={shift.id} className={cn("hover:border-blue-200 transition-all duration-300 cursor-pointer group/card p-0 overflow-hidden ml-2 sm:ml-4 border-l-4 shadow-sm hover:shadow-md bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500", shiftStatusColor?.includes('green') ? 'border-l-green-500' : shiftStatusColor?.includes('red') ? 'border-l-red-500' : 'border-l-blue-500')}>
-                                <div className="p-3 sm:p-4" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
-                                  <div className="flex justify-between items-start mb-3">
+                              <div key={shift.id} className={cn("bg-white dark:bg-[#111827]/80 rounded-[24px] border border-gray-100 dark:border-gray-800/80 shadow-sm overflow-hidden mb-4", shiftStatusColor?.includes('green') ? 'border-l-[6px] border-l-[#22C55E]' : shiftStatusColor?.includes('red') ? 'border-l-[6px] border-l-red-500' : 'border-l-[6px] border-l-[#22C55E]')}>
+                                <div className="p-5 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a2133]/50 transition-colors" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
+                                  <div className="flex justify-between items-start mb-4">
                                     <div className="flex items-center gap-3">
-                                      <div className={cn("p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0", shiftStatusColor?.includes('green') ? 'bg-green-100 dark:bg-green-900/30' : shiftStatusColor?.includes('red') ? 'bg-red-100 dark:bg-red-900/30' : 'bg-blue-100 dark:bg-blue-900/30')}>
-                                        <Car size={18} className={shiftStatusColor?.includes('green') ? 'text-green-600 dark:text-green-400' : shiftStatusColor?.includes('red') ? 'text-red-600 dark:text-red-400' : 'text-blue-600 dark:text-blue-400'} />
+                                      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", shiftStatusColor?.includes('green') ? 'bg-green-500/10 text-green-500' : shiftStatusColor?.includes('red') ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500')}>
+                                        <Car size={18} />
                                       </div>
                                       <div>
-                                        <div className="flex items-center gap-2 mb-1.5">
+                                        <div className="flex items-center gap-2 mb-1">
                                           {shiftStatusColor && (
-                                            <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", shiftStatusColor)} title={shiftStatusTitle} />
+                                            <div className={cn("w-2 h-2 rounded-full shrink-0", shiftStatusColor)} title={shiftStatusTitle} />
                                           )}
-                                          <p className="text-[10px] sm:text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none">
+                                          <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none">
                                             Turno {group.shifts.length - index}
                                           </p>
                                         </div>
-                                        <p className="text-[11px] sm:text-xs font-bold text-gray-400 dark:text-gray-500 flex items-center gap-1">
-                                          <Clock size={10} className="opacity-70" />
+                                        <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                                          <Clock size={12} className="text-gray-400" />
                                           {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
                                         </p>
                                       </div>
                                     </div>
                                     
-                                    <div className="flex flex-col items-end gap-1">
-                                      <span className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white leading-none mt-1">
+                                    <div className="flex flex-col items-end gap-1.5">
+                                      <span className="text-xl font-black text-gray-900 dark:text-white leading-none">
                                         R$ {shift.totalRevenue.toFixed(2)}
                                       </span>
-                                      <motion.div 
-                                        animate={{ rotate: expandedShiftId === shift.id ? 90 : 0 }}
-                                        className="text-gray-300 dark:text-gray-600 mt-1"
-                                      >
-                                        <ChevronRight size={18} />
-                                      </motion.div>
+                                      <div className={cn("p-1.5 rounded-lg bg-gray-50 dark:bg-gray-800 transition-transform duration-300", expandedShiftId === shift.id && "rotate-180 bg-green-50 dark:bg-green-900/20")}>
+                                        <ChevronRight size={14} className={cn("text-gray-400", expandedShiftId === shift.id && "text-green-500")} />
+                                      </div>
                                     </div>
                                   </div>
 
-                                  <div className="flex flex-wrap gap-2 mb-3">
-                                    <div className="flex items-center gap-1.5 text-gray-600 dark:text-gray-300 text-[10px] sm:text-xs font-bold bg-gray-100 dark:bg-gray-800 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-gray-200/50 dark:border-gray-700/50">
-                                      <Clock size={12} className="opacity-70 text-gray-400" />
+                                  <div className="flex flex-wrap gap-2 mb-4">
+                                    <div className="flex items-center gap-1.5 text-xs font-bold bg-gray-50 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg">
+                                      <Clock size={12} />
                                       {formatTime(shift.activeTimeSeconds)}
                                     </div>
                                     {shift.totalTrips > 0 && (
-                                      <div className="flex items-center gap-1.5 text-blue-700 dark:text-blue-300 text-[10px] sm:text-xs font-bold bg-blue-50 dark:bg-blue-900/20 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-blue-100/50 dark:border-blue-800/30">
-                                        <Users size={12} className="opacity-70 text-blue-500" />
+                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-500/20">
+                                        <Users size={12} />
                                         {shift.totalTrips} Corridas
                                       </div>
                                     )}
-                                    <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300 text-[10px] sm:text-xs font-bold bg-indigo-50 dark:bg-indigo-900/20 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded-lg border border-indigo-100/50 dark:border-indigo-800/30">
-                                      <MapPin size={12} className="opacity-70 text-indigo-500" />
+                                    <div className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
+                                      <MapPin size={12} />
                                       {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
                                     </div>
                                   </div>
                                   
-                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 pt-3 border-t border-gray-100 dark:border-gray-800/80">
-                                    <div className="flex items-center justify-between sm:justify-start w-full sm:w-auto px-1 sm:px-0">
-                                      <div className="flex items-center gap-3">
-                                        <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-gray-500 dark:text-gray-400">
-                                          <span className="text-blue-600 dark:text-blue-400">{shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}</span>/km
-                                        </div>
-                                        <div className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full" />
-                                        <div className="flex items-center gap-1 text-[11px] sm:text-xs font-bold text-gray-500 dark:text-gray-400">
-                                          <span className="text-green-600 dark:text-green-400">{shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}</span>/h
-                                        </div>
+                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                                    <div className="flex items-center gap-4">
+                                      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                        <span className="text-green-500">{shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}</span>/km
+                                      </div>
+                                      <div className="w-1.5 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-full" />
+                                      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                        <span className="text-green-500">{shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}</span>/h
                                       </div>
                                     </div>
 
-                                    <div className="flex items-center gap-2 w-full sm:w-auto mt-1 sm:mt-0">
+                                    <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                                       <button 
-                                        className="flex-1 sm:flex-none sm:w-auto h-9 px-3 flex items-center justify-center rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all active:scale-95 border border-gray-200/50 dark:border-gray-700/50"
+                                        className="flex-1 sm:flex-none h-10 px-4 flex items-center justify-center gap-2 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-green-500 hover:bg-white dark:hover:bg-[#1F2937] transition-all font-bold text-xs uppercase tracking-wider"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingShift(shift);
@@ -3291,12 +3326,11 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                         }}
                                         title="Editar Turno"
                                       >
-                                        <Edit2 size={14} />
-                                        <span className="ml-2 text-[11px] font-bold sm:hidden">Editar</span>
+                                        <Edit2 size={14} /> Editar
                                       </button>
                                       
                                       <button 
-                                        className="flex-1 sm:flex-none sm:w-auto h-9 px-3 flex items-center justify-center rounded-xl bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all active:scale-95 shadow-sm border border-blue-100/50 dark:border-blue-800/30"
+                                        className="flex-1 sm:flex-none h-10 px-4 flex items-center justify-center gap-2 rounded-xl bg-[#22C55E] hover:bg-[#16a34a] text-white transition-all font-bold text-xs uppercase tracking-wider shadow-sm"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedShiftId(shift.id);
@@ -3305,8 +3339,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                         }}
                                         title="Adicionar Corrida"
                                       >
-                                        <Plus size={16} strokeWidth={3} />
-                                        <span className="ml-1 text-[11px] font-bold sm:hidden">Corrida</span>
+                                        <Plus size={16} strokeWidth={3} /> Corrida
                                       </button>
                                     </div>
                                   </div>
@@ -3325,39 +3358,44 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                           <span>Detalhes do Turno</span>
                                           <span>{shift.totalTrips} Corridas</span>
                                         </div>
-                                        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Trajeto (KM)</p>
-                                            <div className="flex items-center justify-between text-sm font-bold dark:text-white">
+                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={10} />Odômetro</p>
+                                            <div className="flex items-center justify-between text-sm font-bold dark:text-gray-200">
                                               <span>{shift.startKm}</span>
-                                              <ArrowRight size={12} className="text-gray-300" />
+                                              <ArrowRight size={12} className="text-gray-400" />
                                               <span>{shift.endKm || shift.lastKm || '--'}</span>
                                             </div>
                                           </div>
                                           
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Distância Real</p>
-                                            <p className="text-sm font-bold dark:text-white">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km</span></p>
+                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingUp size={10} />Distância Real</p>
+                                            <p className="text-lg font-black dark:text-white mt-auto">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} <span className="text-[10px] font-bold text-gray-500">km</span></p>
                                           </div>
 
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Rentabilidade</p>
-                                            <div className="space-y-1">
-                                              <p className="text-sm font-bold text-blue-600 dark:text-blue-400 leading-none">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}/km</p>
-                                              <p className="text-sm font-bold text-green-600 dark:text-green-400 leading-none">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}/h</p>
+                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={10} />Rentabilidade</p>
+                                            <div className="space-y-2 mt-auto">
+                                              <div className="flex justify-between items-center text-sm font-bold bg-green-50/50 dark:bg-green-500/10 p-1.5 rounded-lg border border-green-100/50 dark:border-green-500/20">
+                                                <span className="text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</span>
+                                                <span className="text-[10px] text-green-500/70 border-l border-green-200 dark:border-green-800 pl-2">/ km</span>
+                                              </div>
+                                              <div className="flex justify-between items-center text-sm font-bold bg-green-50/50 dark:bg-green-500/10 p-1.5 rounded-lg border border-green-100/50 dark:border-green-500/20">
+                                                <span className="text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</span>
+                                                <span className="text-[10px] text-green-500/70 border-l border-green-200 dark:border-green-800 pl-2">/ h</span>
+                                              </div>
                                             </div>
                                           </div>
 
-                                          <div className="bg-white dark:bg-gray-900 p-3 rounded-2xl border border-gray-100 dark:border-gray-800/60 shadow-sm transition-colors flex flex-col justify-between">
-                                            <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-black tracking-widest mb-1">Carro / Consumo</p>
-                                            <p className="text-sm font-bold dark:text-white mb-2">{shift.avgConsumption?.toFixed(1) || '0.0'} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
-                                            <div className="bg-gray-50 dark:bg-gray-800 p-2 rounded-lg space-y-1 text-xs">
-                                              <div className="flex justify-between items-center text-gray-500 dark:text-gray-400">
-                                                <span>Gasto est.:</span>
-                                                <span className="font-bold">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)}L</span>
+                                          <div className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-[#1F2937] dark:to-[#111827] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5 line-clamp-1"><Activity size={10} />Consumo ({shift.avgConsumption?.toFixed(1) || '0.0'} km/L)</p>
+                                            <div className="space-y-1 mt-auto">
+                                              <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 font-medium">
+                                                <span>Gasto Est.:</span>
+                                                <span className="font-bold text-gray-900 dark:text-gray-200">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)}L</span>
                                               </div>
-                                              <div className="flex justify-between items-center text-red-500 dark:text-red-400">
-                                                <span>Custo est.:</span>
+                                              <div className="flex justify-between items-center text-xs text-red-500 dark:text-red-400 mt-1 pt-1 border-t border-gray-200 dark:border-gray-700">
+                                                <span>Custo:</span>
                                                 <span className="font-bold">-R$ {(((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)) * (settings?.defaultFuelPrice || 0)).toFixed(2)}</span>
                                               </div>
                                             </div>
@@ -3365,106 +3403,116 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                         </div>
 
                                         {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
-                                          <div className="space-y-2 mt-4">
+                                          <div className="space-y-3 mt-6 border-t border-gray-200/50 dark:border-gray-700/50 pt-5">
                                             <div className="flex justify-between items-center">
-                                              <p className="text-[10px] text-gray-400 dark:text-gray-500 uppercase font-bold">Lista de Corridas</p>
+                                              <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5"><MapPin size={10} /> Lista de Corridas</p>
                                               <button 
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   setShiftToDeleteAllTrips(shift.id);
                                                 }}
-                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors"
+                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors px-2 py-1 relative z-10 bg-red-50 dark:bg-red-900/10 rounded-md border border-red-100 dark:border-red-900/30"
                                               >
                                                 Apagar Todas
                                               </button>
                                             </div>
-                                            {shiftTrips[shift.id].map(trip => {
-                                              const mins = Math.floor(trip.durationSeconds / 60);
-                                              const secs = Math.floor(trip.durationSeconds % 60);
-                                              const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
-                                              const tripRph = trip.value / (trip.durationSeconds / 3600);
-                                              
-                                              let bgColorClass = "bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/30";
-                                              let textColorClass = "text-red-700 dark:text-red-400";
-                                              if (trip.isCancelled) {
-                                                bgColorClass = "bg-gray-100 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700/50";
-                                                textColorClass = "text-gray-500 dark:text-gray-400";
-                                              } else if (tripRph > 42) {
-                                                bgColorClass = "bg-green-100 dark:bg-green-900/20 border-green-200 dark:border-green-800/40"; // Verde Claro
-                                                textColorClass = "text-green-600 dark:text-green-400 font-black";
-                                              } else if (tripRph > 37) {
-                                                bgColorClass = "bg-emerald-50 dark:bg-emerald-900/10 border-emerald-100 dark:border-emerald-900/30"; // Verde Escuro
-                                                textColorClass = "text-emerald-700 dark:text-emerald-500";
-                                              } else if (tripRph > 33) {
-                                                bgColorClass = "bg-orange-50 dark:bg-orange-900/10 border-orange-100 dark:border-orange-900/30"; // Laranja
-                                                textColorClass = "text-orange-600 dark:text-orange-400";
-                                              }
+                                            <div className="grid gap-2">
+                                              {shiftTrips[shift.id].map(trip => {
+                                                const mins = Math.floor(trip.durationSeconds / 60);
+                                                const secs = Math.floor(trip.durationSeconds % 60);
+                                                const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
+                                                const tripRph = trip.value / (trip.durationSeconds / 3600);
+                                                
+                                                let bgColorClass = "bg-red-50/80 dark:bg-red-900/10 border-red-200/50 dark:border-red-900/30";
+                                                let textColorClass = "text-red-700 dark:text-red-400";
+                                                let badgeClass = "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400";
+                                                
+                                                if (trip.isCancelled) {
+                                                  bgColorClass = "bg-gray-100/50 dark:bg-[#1F2937] border-gray-200/50 dark:border-gray-700/50 opacity-75";
+                                                  textColorClass = "text-gray-500 dark:text-gray-400";
+                                                  badgeClass = "bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400";
+                                                } else if (tripRph > 42) {
+                                                  bgColorClass = "bg-green-50/80 dark:bg-green-900/10 border-green-200/50 dark:border-green-900/30"; // Verde Claro
+                                                  textColorClass = "text-green-700 dark:text-green-400 font-black";
+                                                  badgeClass = "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400";
+                                                } else if (tripRph > 37) {
+                                                  bgColorClass = "bg-emerald-50/80 dark:bg-emerald-900/10 border-emerald-200/50 dark:border-emerald-900/30"; // Verde Escuro
+                                                  textColorClass = "text-emerald-700 dark:text-emerald-400";
+                                                  badgeClass = "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400";
+                                                } else if (tripRph > 33) {
+                                                  bgColorClass = "bg-orange-50/80 dark:bg-orange-900/10 border-orange-200/50 dark:border-orange-900/30"; // Laranja
+                                                  textColorClass = "text-orange-700 dark:text-orange-400";
+                                                  badgeClass = "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400";
+                                                }
 
-                                              return (
-                                                <div key={trip.id} className={cn("flex justify-between items-center px-3 py-2.5 rounded-xl text-sm border shadow-sm transition-all relative overflow-hidden", bgColorClass)}>
-                                                  {/* Soft background gradient overlay for styling */}
-                                                  <div className="absolute inset-0 bg-gradient-to-r from-white/40 dark:from-black/10 to-transparent pointer-events-none" />
-                                                  
-                                                  <div className="flex items-center gap-2 sm:gap-3 w-full relative z-10">
-                                                    <div className="flex items-center justify-between gap-1 w-full flex-wrap sm:flex-nowrap">
-                                                       {tripHour && <span className={cn("text-xs font-bold tabular-nums w-10 shrink-0", textColorClass)}>{tripHour}</span>}
-                                                       <span className={cn("font-black text-sm shrink-0 min-w-[60px]", textColorClass)}>R$ {trip.value.toFixed(2)}</span>
-                                                       
-                                                       {trip.isCancelled ? (
-                                                         <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded-md self-center ml-2 border", "bg-red-500 text-white border-red-600 dark:bg-red-900/40 dark:text-red-400 dark:border-red-800")}>Cancelada</span>
-                                                       ) : (
-                                                         <>
-                                                           <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
-                                                           <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-80", textColorClass)}>
-                                                             {mins > 0 ? `${mins}m ` : ''}{secs}s
-                                                           </span>
-                                                           <div className="hidden sm:flex h-3 w-px bg-white/50 dark:bg-black/20 mx-1"></div>
-                                                           <span className={cn("text-xs font-bold shrink-0 tabular-nums opacity-90", textColorClass)}>
-                                                             {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
-                                                           </span>
-                                                           {trip.dynamicValue && trip.dynamicValue > 0 && (
-                                                             <span className="text-[10px] px-1.5 py-0.5 ml-1 bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 rounded-md font-bold shrink-0 border border-teal-200 dark:border-teal-800">
-                                                               + R$ {trip.dynamicValue.toFixed(2)} dinâmico
-                                                             </span>
+                                                return (
+                                                  <div key={trip.id} className={cn("flex justify-between items-center px-4 py-3 rounded-2xl text-sm border shadow-sm transition-all relative overflow-hidden group", bgColorClass)}>
+                                                    {/* Soft background gradient overlay for styling */}
+                                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-black/10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                    
+                                                    <div className="flex items-center gap-3 w-full relative z-10">
+                                                      <div className="flex items-center gap-3 sm:gap-4 w-full flex-wrap sm:flex-nowrap">
+                                                         {tripHour && <span className={cn("text-xs font-bold tabular-nums w-12 shrink-0 px-2 py-1 rounded-lg text-center", badgeClass)}>{tripHour}</span>}
+                                                         
+                                                         <div className="flex flex-col">
+                                                           <span className={cn("font-black text-[15px] leading-none mb-1", textColorClass)}>R$ {trip.value.toFixed(2)}</span>
+                                                           {!trip.isCancelled && (
+                                                             <div className="flex items-center gap-2">
+                                                               <span className={cn("text-[11px] font-bold tabular-nums opacity-80", textColorClass)}>
+                                                                 {mins > 0 ? `${mins}m ` : ''}{secs}s
+                                                               </span>
+                                                               <div className="h-2 w-px bg-current opacity-20"></div>
+                                                               <span className={cn("text-[11px] font-bold tabular-nums opacity-90", textColorClass)}>
+                                                                 {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
+                                                               </span>
+                                                               {trip.dynamicValue && trip.dynamicValue > 0 && (
+                                                                 <span className="text-[9px] px-1.5 py-0.5 ml-1 bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 rounded-md font-bold shrink-0 border border-teal-200 dark:border-teal-800">
+                                                                   + R$ {trip.dynamicValue.toFixed(2)} dinâmico
+                                                                 </span>
+                                                               )}
+                                                             </div>
                                                            )}
-                                                         </>
-                                                       )}
+                                                           {trip.isCancelled && (
+                                                             <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded-md mt-1 w-max border", "bg-red-500 text-white border-red-600 dark:bg-red-900/40 dark:text-red-400 dark:border-red-800")}>Cancelada</span>
+                                                           )}
+                                                         </div>
+                                                      </div>
+                                                    </div>
+                                                    <div className="flex gap-1.5 ml-3 shrink-0 relative z-10 border-l border-current opacity-50 pl-3">
+                                                      <button 
+                                                        className="p-1.5 text-current opacity-70 hover:opacity-100 hover:bg-white/50 dark:hover:bg-black/20 rounded-xl transition-all active:scale-95"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setSelectedShiftId(shift.id);
+                                                          setInitialTripIdForSequentialForm(trip.id);
+                                                          setShowTripModal(true);
+                                                        }}
+                                                        title="Editar Corrida"
+                                                      >
+                                                        <Edit2 size={16} />
+                                                      </button>
+                                                      <button 
+                                                        className="p-1.5 text-current opacity-70 hover:opacity-100 hover:bg-white/50 dark:hover:bg-black/20 rounded-xl transition-all active:scale-95"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setTripToDelete({ shiftId: shift.id, tripId: trip.id });
+                                                        }}
+                                                        title="Apagar Corrida"
+                                                      >
+                                                        <X size={16} />
+                                                      </button>
                                                     </div>
                                                   </div>
-                                                  <div className="flex gap-1 ml-2 shrink-0 relative z-10">
-                                                    <button 
-                                                      className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-white/50 dark:hover:bg-black/20 rounded-lg transition-colors"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setSelectedShiftId(shift.id);
-                                                        setInitialTripIdForSequentialForm(trip.id);
-                                                        setShowTripModal(true);
-                                                      }}
-                                                      title="Editar Corrida"
-                                                    >
-                                                      <Edit2 size={14} />
-                                                    </button>
-                                                    <button 
-                                                      className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-white/50 dark:hover:bg-black/20 rounded-lg transition-colors"
-                                                      onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setTripToDelete({ shiftId: shift.id, tripId: trip.id });
-                                                      }}
-                                                      title="Apagar Corrida"
-                                                    >
-                                                      <X size={14} />
-                                                    </button>
-                                                  </div>
-                                                </div>
-                                              );
-                                            })}
+                                                );
+                                              })}
+                                            </div>
                                           </div>
                                         )}
                                       </div>
                                     </motion.div>
                                   )}
                                 </AnimatePresence>
-                              </Card>
+                              </div>
                             );
                           })}
                           </motion.div>
@@ -3479,7 +3527,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               <div className="pt-6 pb-20">
                 <Button 
                   onClick={() => setShowAiAnalysisModal(true)}
-                  className="w-full py-6 rounded-3xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-xl shadow-blue-200 dark:shadow-none transition-all group overflow-hidden relative"
+                  className="w-full py-6 rounded-3xl bg-gradient-to-r from-green-600 to-indigo-600 hover:from-green-700 hover:to-indigo-700 text-white shadow-xl shadow-green-200 dark:shadow-none transition-all group overflow-hidden relative"
                 >
                   <motion.div
                     className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
@@ -3523,11 +3571,11 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
               {/* Total Balance Overview */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-6 rounded-3xl text-white shadow-xl shadow-blue-500/20 relative overflow-hidden">
+                <div className="bg-gradient-to-br from-green-600 to-indigo-600 p-6 rounded-3xl text-white shadow-xl shadow-green-500/20 relative overflow-hidden">
                   <div className="absolute right-0 top-0 opacity-10 pointer-events-none translate-x-4 -translate-y-4">
                     <Wallet size={120} />
                   </div>
-                  <p className="text-sm font-medium text-blue-100 mb-1">Saldo Plataforma (Uber)</p>
+                  <p className="text-sm font-medium text-green-100 mb-1">Saldo Plataforma (Uber)</p>
                   <h3 className="text-4xl font-black tracking-tight relative z-10">R$ {settings?.platformBalance?.toFixed(2) || '0.00'}</h3>
                 </div>
 
@@ -3654,7 +3702,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                   <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Contas Fixas</h3>
                   <button 
                     onClick={() => setShowFixedExpenseModal(true)}
-                    className="text-blue-600 dark:text-blue-400 text-sm font-bold hover:underline"
+                    className="text-green-600 dark:text-green-400 text-sm font-bold hover:underline"
                   >
                     + Adicionar
                   </button>
@@ -3710,7 +3758,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                 </button>
                               )}
                               <button 
-                                className="p-2 text-gray-400 hover:text-blue-500 bg-gray-50 dark:bg-gray-800/50 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-all border border-gray-100 dark:border-gray-700/50"
+                                className="p-2 text-gray-400 hover:text-green-500 bg-gray-50 dark:bg-gray-800/50 hover:bg-green-50 dark:hover:bg-green-900/30 rounded-lg transition-all border border-gray-100 dark:border-gray-700/50"
                                 onClick={() => {
                                   setEditingFixedExpense(fe);
                                   setShowFixedExpenseModal(true);
@@ -3766,7 +3814,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                     return (
                       <Card 
                         key={fuel.id} 
-                        className="bg-white dark:bg-gray-900 border-l-[4px] border-l-blue-500 p-4 group cursor-pointer hover:bg-blue-50/30 dark:hover:bg-blue-900/10 transition-all border border-gray-100 dark:border-gray-800"
+                        className="bg-white dark:bg-gray-900 border-l-[4px] border-l-green-500 p-4 group cursor-pointer hover:bg-green-50/30 dark:hover:bg-green-900/10 transition-all border border-gray-100 dark:border-gray-800"
                         onClick={() => {
                           setEditingFuel(fuel);
                           setShowEditFuelModal(true);
@@ -3780,18 +3828,18 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                               <span className="opacity-30">•</span>
                               <span>{fuel.liters.toFixed(2)}L</span>
                               <span className="opacity-30">•</span>
-                              <span className="text-blue-600 dark:text-blue-400">R${fuel.pricePerLiter.toFixed(2)}/L</span>
+                              <span className="text-green-600 dark:text-green-400">R${fuel.pricePerLiter.toFixed(2)}/L</span>
                             </p>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="text-right">
-                              <p className="text-sm font-bold text-blue-600 dark:text-blue-400">{fuel.km} km</p>
+                              <p className="text-sm font-bold text-green-600 dark:text-green-400">{fuel.km} km</p>
                               {kmDriven > 0 && (
                                 <p className="text-[10px] text-green-600 dark:text-green-500 font-bold mt-0.5">{kmDriven} km rod.</p>
                               )}
                             </div>
-                            <div className="p-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg group-hover:bg-blue-100 dark:group-hover:bg-blue-900/40 transition-colors">
-                              <ChevronRight size={16} className="text-gray-400 group-hover:text-blue-600 transition-colors" />
+                            <div className="p-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
+                              <ChevronRight size={16} className="text-gray-400 group-hover:text-green-600 transition-colors" />
                             </div>
                           </div>
                         </div>
@@ -3857,7 +3905,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                     onClick={() => setInsightFilter(f)}
                     className={cn(
                       "flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-xl transition-all",
-                      insightFilter === f ? "bg-blue-600 text-white shadow-md" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                      insightFilter === f ? "bg-green-600 text-white shadow-md" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
                     )}
                   >
                     {f === 'day' ? 'Hoje' : f === 'week' ? 'Semana' : 'Mês'}
@@ -3906,9 +3954,9 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.revenuePerHour >= 35 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerHour >= 25 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          metrics.revenuePerHour >= 35 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerHour >= 25 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
-                          <Clock size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
+                          <Clock size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
                           <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / Hora</p>
@@ -3917,7 +3965,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       </div>
                       <div className={cn(
                         "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                        metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerHour >= 35 ? "Excelente" : metrics.revenuePerHour >= 25 ? "Bom" : "Baixo"}
                       </div>
@@ -3927,9 +3975,9 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.revenuePerKm >= 2.5 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerKm >= 1.8 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          metrics.revenuePerKm >= 2.5 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerKm >= 1.8 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
-                          <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
+                          <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
                           <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / KM</p>
@@ -3938,7 +3986,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       </div>
                       <div className={cn(
                         "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                        metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.revenuePerKm >= 2.5 ? "Excelente" : metrics.revenuePerKm >= 1.8 ? "Bom" : "Baixo"}
                       </div>
@@ -3948,9 +3996,9 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       <div className="flex items-center gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.ticketMedio >= 15 ? "bg-green-50 dark:bg-green-900/20" : metrics.ticketMedio >= 10 ? "bg-blue-50 dark:bg-blue-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          metrics.ticketMedio >= 15 ? "bg-green-50 dark:bg-green-900/20" : metrics.ticketMedio >= 10 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
                         )}>
-                          <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-blue-600 dark:text-blue-400" : "text-red-600 dark:text-red-400"} />
+                          <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
                         </div>
                         <div>
                           <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Ticket Médio</p>
@@ -3959,7 +4007,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       </div>
                       <div className={cn(
                         "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                        metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                       )}>
                         {metrics.ticketMedio >= 15 ? "Excelente" : metrics.ticketMedio >= 10 ? "Bom" : "Baixo"}
                       </div>
@@ -4081,7 +4129,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                     
                     <Card className="bg-gray-900 border-gray-800 shadow-xl overflow-hidden p-0">
                       {/* Top Bar - Resumo Liquido */}
-                      <div className="p-5 bg-gradient-to-r from-green-600/20 to-blue-600/20 border-b border-gray-800">
+                      <div className="p-5 bg-gradient-to-r from-green-600/20 to-green-600/20 border-b border-gray-800">
                         <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Lucro Líquido Final Estimado</p>
                         <div className="flex justify-between items-baseline">
                            <p className="text-3xl font-black text-white tracking-tighter">R$ {metrics.estimatedProfit.toFixed(2)}</p>
@@ -4159,7 +4207,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       </div>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs text-gray-500 dark:text-gray-400">
                         <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-blue-600 shrink-0" />
+                          <div className="w-2 h-2 rounded-full bg-green-600 shrink-0" />
                           <span>Mês Atual: {monthlySummary.currentCount} turnos</span>
                         </div>
                         <div className="flex items-center gap-1">
@@ -4174,18 +4222,18 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                   {goalsProjection && (
                     <div className="space-y-3">
                       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Projeção de Meta Semanal</h3>
-                      <Card className="bg-blue-600 text-white p-6 relative overflow-hidden">
+                      <Card className="bg-green-600 text-white p-6 relative overflow-hidden">
                         <div className="absolute -right-4 -bottom-4 opacity-10">
                           <Target size={120} />
                         </div>
                         <div className="relative z-10 space-y-4">
                           <div className="flex justify-between items-end">
                             <div>
-                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
+                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
                               <p className="text-2xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-blue-100 text-[10px] font-bold uppercase tracking-tight mb-1">Meta Semanal</p>
+                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-tight mb-1">Meta Semanal</p>
                               <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
                               {planningMetrics && (
                                 <span className="text-[8px] bg-white/20 px-1.5 py-0.5 rounded-md uppercase font-bold tracking-tighter mt-1 block">Sincronizada</span>
@@ -4193,7 +4241,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                             </div>
                           </div>
                           
-                          <div className="w-full bg-blue-700/50 h-3 rounded-full overflow-hidden border border-blue-500/30">
+                          <div className="w-full bg-green-700/50 h-3 rounded-full overflow-hidden border border-green-500/30">
                             <motion.div 
                               initial={{ width: 0 }}
                               animate={{ width: `${Math.min(100, (goalsProjection.weeklyRevenue / goalsProjection.weeklyGoal) * 100)}%` }}
@@ -4207,7 +4255,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                 <Sparkles size={18} className="text-white" />
                               </div>
                               <div>
-                                <p className="text-[10px] text-blue-100 font-bold uppercase">Estimativa para bater a meta</p>
+                                <p className="text-[10px] text-green-100 font-bold uppercase">Estimativa para bater a meta</p>
                                 <p className="text-sm font-bold">
                                   Precisa de <span className="text-yellow-300">R$ {goalsProjection.requiredDaily.toFixed(2)} / dia</span> nos próximos {goalsProjection.daysRemaining} dias.
                                 </p>
@@ -4228,8 +4276,8 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       {/* Bloco 1: Resumo Rápido */}
                       <Card className="p-5 flex flex-col justify-center">
                          <div className="flex items-center gap-2 mb-4">
-                           <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-xl">
-                             <Clock size={18} className="text-blue-600 dark:text-blue-400" />
+                           <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-xl">
+                             <Clock size={18} className="text-green-600 dark:text-green-400" />
                            </div>
                            <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Resumo de Horários</h4>
                          </div>
@@ -4330,7 +4378,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                   return (
                                     <div className="bg-gray-900 border border-gray-800 text-white p-3 rounded-xl shadow-xl">
                                       <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{data.date}</p>
-                                      <p className="text-lg font-black text-blue-400">{data.kmL.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
+                                      <p className="text-lg font-black text-green-400">{data.kmL.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
                                       {(isBest || isWorst) && (
                                          <p className={cn("text-[10px] font-bold mt-1", isBest ? "text-green-400" : "text-red-400")}>
                                            {isBest ? '⭐ Melhor Consumo' : '⚠️ Pior Consumo'}
@@ -4373,9 +4421,9 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                         
                         <div className="space-y-4">
                           {[
-                            { label: 'Curtas (< 5km)', val: tripProfile.shortPerc, avg: tripProfile.shortAvgVal, color: 'bg-blue-400' },
-                            { label: 'Médias (5-12km)', val: tripProfile.mediumPerc, avg: tripProfile.mediumAvgVal, color: 'bg-blue-600' },
-                            { label: 'Longas (> 12km)', val: tripProfile.longPerc, avg: tripProfile.longAvgVal, color: 'bg-blue-800' }
+                            { label: 'Curtas (< 5km)', val: tripProfile.shortPerc, avg: tripProfile.shortAvgVal, color: 'bg-green-400' },
+                            { label: 'Médias (5-12km)', val: tripProfile.mediumPerc, avg: tripProfile.mediumAvgVal, color: 'bg-green-600' },
+                            { label: 'Longas (> 12km)', val: tripProfile.longPerc, avg: tripProfile.longAvgVal, color: 'bg-green-800' }
                           ].map(p => (
                             <div key={p.label} className="space-y-1.5">
                               <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500 items-end">
@@ -4407,7 +4455,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-4">
                         {/* Melhor Faturamento */}
                         <div className="space-y-3">
-                          <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest ml-1 text-center md:text-left">Top Faturamento</p>
+                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest ml-1 text-center md:text-left">Top Faturamento</p>
                           <div className="space-y-2">
                             {topShifts.revenue.length === 0 ? (
                               <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
@@ -4420,7 +4468,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                   )}>{i+1}º</span>
                                   <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
                                 </div>
-                                <p className="font-black text-blue-600 dark:text-blue-400">R$ {s.totalRevenue.toFixed(2)}</p>
+                                <p className="font-black text-green-600 dark:text-green-400">R$ {s.totalRevenue.toFixed(2)}</p>
                               </div>
                             ))}
                           </div>
@@ -4480,7 +4528,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Análise Inteligente</h3>
                       <Button 
                         variant="ghost" 
-                        className="p-0 h-auto text-blue-600 text-xs font-bold flex items-center gap-1 self-start sm:self-auto"
+                        className="p-0 h-auto text-green-600 text-xs font-bold flex items-center gap-1 self-start sm:self-auto"
                         onClick={generateAiReport}
                         disabled={isGeneratingAi}
                       >
@@ -4494,15 +4542,15 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                         <motion.div
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
-                          className="bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-800 rounded-3xl p-6 relative overflow-hidden transition-colors"
+                          className="bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800 rounded-3xl p-6 relative overflow-hidden transition-colors"
                         >
                           <div className="absolute top-0 right-0 p-4 opacity-10">
-                            <Sparkles size={40} className="text-blue-600 dark:text-blue-400" />
+                            <Sparkles size={40} className="text-green-600 dark:text-green-400" />
                           </div>
-                          <div className="prose prose-sm max-w-none text-blue-900 dark:text-blue-100 font-medium leading-relaxed markdown-body">
+                          <div className="prose prose-sm max-w-none text-green-900 dark:text-green-100 font-medium leading-relaxed markdown-body">
                             <Markdown>{aiReport}</Markdown>
                           </div>
-                          <Button variant="ghost" className="mt-4 text-xs text-blue-600 p-0" onClick={() => setAiReport(null)}>Fechar</Button>
+                          <Button variant="ghost" className="mt-4 text-xs text-green-600 p-0" onClick={() => setAiReport(null)}>Fechar</Button>
                         </motion.div>
                       )}
                     </AnimatePresence>
@@ -4575,7 +4623,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                  fixedExpenses.filter(fe => fe.active).map(fe => (
                    <div key={fe.id} className="bg-white dark:bg-gray-800 p-3 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm flex justify-between items-center">
                      <div className="flex items-center gap-3">
-                       <div className="bg-blue-100 dark:bg-blue-900/40 p-2 rounded-lg text-blue-600 dark:text-blue-400"><Calendar size={16} /></div>
+                       <div className="bg-green-100 dark:bg-green-900/40 p-2 rounded-lg text-green-600 dark:text-green-400"><Calendar size={16} /></div>
                        <div>
                          <p className="font-bold text-sm dark:text-white">{fe.name}</p>
                          <p className="text-[10px] text-gray-500 font-medium">Venc. Dia {fe.dueDay}</p>
@@ -4620,11 +4668,11 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
       <Modal isOpen={showAiAnalysisModal} onClose={() => setShowAiAnalysisModal(false)} title="Análise de IA">
         <div className="space-y-6">
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl flex items-center gap-3 border border-blue-100 dark:border-blue-800/50">
-            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-blue-600 dark:text-blue-400">
+          <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-2xl flex items-center gap-3 border border-green-100 dark:border-green-800/50">
+            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-green-600 dark:text-green-400">
               <Sparkles size={18} />
             </div>
-            <p className="text-xs text-blue-800 dark:text-blue-200 font-medium">
+            <p className="text-xs text-green-800 dark:text-green-200 font-medium">
               Escolha um período e pergunte qualquer coisa sobre seu histórico de trabalho.
             </p>
           </div>
@@ -4640,7 +4688,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                       onClick={() => setAnalysisFilter(f)}
                       className={cn(
                         "flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all",
-                        analysisFilter === f ? "bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
+                        analysisFilter === f ? "bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
                       )}
                     >
                       {f === 'day' ? 'Dia' : f === 'week' ? 'Semana' : 'Mês'}
@@ -4666,14 +4714,14 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                 placeholder="Ex: Como foi minha semana? O que posso melhorar? Quais corridas foram ruins?"
                 value={analysisQuery}
                 onChange={(e) => setAnalysisQuery(e.target.value)}
-                className="w-full bg-gray-100 dark:bg-gray-800 border-none rounded-2xl p-4 text-sm dark:text-white h-24 focus:ring-2 focus:ring-blue-500 transition-all resize-none"
+                className="w-full bg-gray-100 dark:bg-gray-800 border-none rounded-2xl p-4 text-sm dark:text-white h-24 focus:ring-2 focus:ring-green-500 transition-all resize-none"
               />
             </div>
 
             <Button 
               onClick={handleHistoryAIAnalysis}
               disabled={isAnalyzing || !analysisQuery.trim()}
-              className="w-full py-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center justify-center gap-2"
+              className="w-full py-4 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-bold flex items-center justify-center gap-2"
             >
               {isAnalyzing ? (
                 <>
@@ -4701,7 +4749,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                 <button
                   key={q}
                   onClick={() => setAnalysisQuery(q)}
-                  className="bg-gray-100 dark:bg-gray-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-[10px] font-bold py-1 px-3 rounded-lg text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-all"
+                  className="bg-gray-100 dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 text-[10px] font-bold py-1 px-3 rounded-lg text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-all"
                 >
                   {q}
                 </button>
@@ -4713,13 +4761,13 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
       <Modal isOpen={showAiResultModal} onClose={() => setShowAiResultModal(false)} title="Insights da IA">
         <div className="space-y-6">
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl flex items-center gap-3 border border-blue-100 dark:border-blue-800/50">
-            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-blue-600 dark:text-blue-400">
+          <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-2xl flex items-center gap-3 border border-green-100 dark:border-green-800/50">
+            <div className="bg-white dark:bg-gray-800 p-2 rounded-xl text-green-600 dark:text-green-400">
               <Sparkles size={18} />
             </div>
             <div>
-              <p className="text-[10px] uppercase font-black tracking-widest text-blue-600 dark:text-blue-400">Análise Concluída</p>
-              <p className="text-xs text-blue-800 dark:text-blue-200 font-medium">
+              <p className="text-[10px] uppercase font-black tracking-widest text-green-600 dark:text-green-400">Análise Concluída</p>
+              <p className="text-xs text-green-800 dark:text-green-200 font-medium">
                 {analysisFilter === 'day' ? 'Relatório Diário' : analysisFilter === 'week' ? 'Relatório Semanal' : 'Relatório Mensal'}
               </p>
             </div>
@@ -4790,7 +4838,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
       <Modal isOpen={showImportModal} onClose={() => setShowImportModal(false)} title="Importar Histórico">
         <div className="space-y-4">
-          <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-200">
+          <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-xl text-sm text-green-800 dark:text-green-200">
             <p className="font-bold mb-2">Como importar seus dados:</p>
             <p className="mb-2">Cole na caixa abaixo os dados dos seus turnos anteriores. A inteligência artificial do app vai ler o texto e cadastrar tudo automaticamente.</p>
             <p><strong>Dica:</strong> Se você exportou os dados deste app anteriormente, basta abrir o arquivo CSV, copiar todo o conteúdo e colar aqui. O formato será reconhecido perfeitamente!</p>
@@ -4800,7 +4848,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
-              className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white h-48 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all resize-none"
+              className="w-full p-3 border border-gray-300 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white h-48 focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all resize-none"
               placeholder="Cole seus dados aqui..."
             />
           </div>
@@ -5038,7 +5086,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
         <div className="space-y-6">
           {isGeneratingRealtimeAi ? (
             <div className="flex flex-col items-center justify-center py-12 space-y-4">
-              <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
               <p className="text-gray-500 font-medium">A IA está analisando seu turno e o histórico das próximas horas...</p>
             </div>
           ) : (
@@ -5063,12 +5111,12 @@ function NavButton({ active, onClick, icon: Icon, label }: { active: boolean, on
       onClick={onClick}
       className={cn(
         "flex flex-col items-center gap-1 transition-all duration-300 px-1 sm:px-2",
-        active ? "text-blue-600 scale-110" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+        active ? "text-green-600 scale-110" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
       )}
     >
       <Icon size={22} className="sm:w-6 sm:h-6" strokeWidth={active ? 2.5 : 2} />
       <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest">{label}</span>
-      {active && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-blue-600 rounded-full mt-0.5" />}
+      {active && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-green-600 rounded-full mt-0.5" />}
     </button>
   );
 }
@@ -5120,7 +5168,7 @@ function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
       <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
       <Button 
         onClick={() => onSubmit(Number(value))} 
-        className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white"
+        className="w-full py-4 bg-green-600 hover:bg-green-500 text-white"
         disabled={!value || Number(value) <= 0}
       >
         Salvar Nova Corrida
@@ -5201,9 +5249,9 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-4">
-        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Ganhos atuais registrados</p>
-        <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">R$ {currentRevenue.toFixed(2)}</p>
+      <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-xl mb-4">
+        <p className="text-sm text-green-600 dark:text-green-400 font-medium">Ganhos atuais registrados</p>
+        <p className="text-2xl font-bold text-green-700 dark:text-green-300">R$ {currentRevenue.toFixed(2)}</p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <CurrencyInput
@@ -5344,9 +5392,9 @@ function ShiftFuelForm({ onSubmit }: {
       </div>
       <Input label="Autonomia DEPOIS (KM)" type="number" value={autonomyAfter} onChange={e => setAutonomyAfter(e.target.value)} />
       
-      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl">
-        <p className="text-xs text-blue-600 dark:text-blue-400 font-bold uppercase">Litros Estimados</p>
-        <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+      <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-xl">
+        <p className="text-xs text-green-600 dark:text-green-400 font-bold uppercase">Litros Estimados</p>
+        <p className="text-2xl font-bold text-green-900 dark:text-green-100">
           {Number(price) > 0 ? (Number(total) / Number(price)).toFixed(2) : '0.00'} L
         </p>
       </div>
@@ -5377,9 +5425,9 @@ function FuelForm({ onSubmit, initialData, onDelete }: {
         <CurrencyInput label="Preço/Litro (R$)" value={price} onValueChange={setPrice} />
         <CurrencyInput label="Valor Total (R$)" value={total} onValueChange={setTotal} />
       </div>
-      <div className="bg-blue-50 p-4 rounded-xl">
-        <p className="text-xs text-blue-600 font-bold uppercase">Litros Estimados</p>
-        <p className="text-2xl font-bold text-blue-900">
+      <div className="bg-green-50 p-4 rounded-xl">
+        <p className="text-xs text-green-600 font-bold uppercase">Litros Estimados</p>
+        <p className="text-2xl font-bold text-green-900">
           {Number(price) > 0 ? (Number(total) / Number(price)).toFixed(2) : '0.00'} L
         </p>
       </div>
@@ -5660,7 +5708,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
         <button 
           onClick={handleGoBack} 
           disabled={viewMode === 'edit' && editIndex === 0}
-          className="p-2 text-gray-500 hover:text-blue-600 disabled:opacity-30 transition-colors"
+          className="p-2 text-gray-500 hover:text-green-600 disabled:opacity-30 transition-colors"
         >
           <ChevronLeft size={24} />
         </button>
@@ -5670,7 +5718,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
         <button 
           onClick={handleGoForward} 
           disabled={viewMode === 'new'}
-          className="p-2 text-gray-500 hover:text-blue-600 disabled:opacity-30 transition-colors"
+          className="p-2 text-gray-500 hover:text-green-600 disabled:opacity-30 transition-colors"
         >
           <ChevronRight size={24} />
         </button>
@@ -5802,7 +5850,7 @@ function MonthlyGoalForm({ onSubmit, currentGoal, currentWorkDays }: { onSubmit:
               className={cn(
                 "px-3 py-2 rounded-xl text-xs font-bold transition-all flex-1 sm:flex-none",
                 workDays.includes(day.value) 
-                  ? "bg-blue-600 text-white shadow-md" 
+                  ? "bg-green-600 text-white shadow-md" 
                   : "bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700"
               )}
             >
@@ -5871,9 +5919,9 @@ function WithdrawalForm({ onSubmit, platformBalance }: {
 
   return (
     <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
-      <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl mb-4">
-        <p className="text-sm text-blue-600 dark:text-blue-400 font-medium">Saldo Disponível na Plataforma</p>
-        <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">R$ {platformBalance.toFixed(2)}</p>
+      <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-xl mb-4">
+        <p className="text-sm text-green-600 dark:text-green-400 font-medium">Saldo Disponível na Plataforma</p>
+        <p className="text-2xl font-bold text-green-700 dark:text-green-300">R$ {platformBalance.toFixed(2)}</p>
       </div>
 
       <CurrencyInput label="Valor do Saque/Transferência (R$)" value={amount} onValueChange={setAmount} />
@@ -5956,7 +6004,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         <h3 className="text-sm font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Intervalos de Manutenção</h3>
         
         <div className="space-y-4">
-          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Troca de Óleo</p>
+          <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase">Troca de Óleo</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={oilInt} onChange={e => setOilInt(e.target.value)} />
             <Input label="Última Troca (KM)" type="number" value={oilLast} onChange={e => setOilLast(e.target.value)} />
@@ -5964,7 +6012,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         </div>
 
         <div className="space-y-4">
-          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Rodízio de Pneus</p>
+          <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase">Rodízio de Pneus</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={tireInt} onChange={e => setTireInt(e.target.value)} />
             <Input label="Último Rodízio (KM)" type="number" value={tireLast} onChange={e => setTireLast(e.target.value)} />
@@ -5972,7 +6020,7 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         </div>
 
         <div className="space-y-4">
-          <p className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase">Correia Dentada</p>
+          <p className="text-xs font-bold text-green-600 dark:text-green-400 uppercase">Correia Dentada</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Input label="Intervalo (KM)" type="number" value={beltInt} onChange={e => setBeltInt(e.target.value)} />
             <Input label="Última Troca (KM)" type="number" value={beltLast} onChange={e => setBeltLast(e.target.value)} />
@@ -6014,8 +6062,8 @@ function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings
         </Button>
       </Card>
       
-      <div className="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-100 dark:border-blue-800 transition-colors">
-        <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+      <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-2xl border border-green-100 dark:border-green-800 transition-colors">
+        <p className="text-xs text-green-700 dark:text-green-300 leading-relaxed">
           <strong>Dica:</strong> O custo de manutenção agora é calculado como uma porcentagem do seu faturamento. 
           Um valor comum é separar 10% de tudo que você ganha para manutenção (pneus, óleo, suspensão).
         </p>
