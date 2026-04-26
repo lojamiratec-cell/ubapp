@@ -22,7 +22,7 @@ import {
   signInWithPopup, signInWithRedirect, onAuthStateChanged, User, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { 
-  collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch
+  collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch, increment
 } from 'firebase/firestore';
 import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -159,6 +159,259 @@ const Select = ({ label, options, ...props }: { label: string, options: string[]
   </div>
 );
 
+// --- Performance Helpers ---
+export function getRpkmTier(rpkm: number) {
+   if (rpkm >= 2.50) return { label: 'Ótimo', color: 'text-blue-500', bg: 'bg-blue-500/10' };
+   if (rpkm >= 2.00) return { label: 'Bom', color: 'text-green-500', bg: 'bg-green-500/10' };
+   if (rpkm > 1.80) return { label: 'Mediano', color: 'text-orange-500', bg: 'bg-orange-500/10' };
+   return { label: 'Ruim', color: 'text-red-500', bg: 'bg-red-500/10' };
+}
+
+export function getRphTier(rph: number) {
+   if (rph >= 42) return { label: 'Ótimo', color: 'text-blue-500', bg: 'bg-blue-500/10' };
+   if (rph >= 38) return { label: 'Bom', color: 'text-green-500', bg: 'bg-green-500/10' };
+   if (rph > 32) return { label: 'Mediano', color: 'text-orange-500', bg: 'bg-orange-500/10' };
+   return { label: 'Ruim', color: 'text-red-500', bg: 'bg-red-500/10' };
+}
+
+// --- Live Shift Analysis Component (Radar Estratégico) ---
+function LiveShiftAnalysis({ 
+  currentRph, 
+  currentRpkm, 
+  avgRph, 
+  avgRpkm, 
+  activeShift, 
+  trips 
+}: { 
+  currentRph: number, 
+  currentRpkm: number, 
+  avgRph: number, 
+  avgRpkm: number,
+  activeShift: Shift | null,
+  trips: Trip[]
+}) {
+  if (currentRph === 0 && currentRpkm === 0) return null;
+
+  const rphTier = getRphTier(currentRph);
+  const rpkmTier = getRpkmTier(currentRpkm);
+
+  const overallTier = currentRph >= 42 && currentRpkm >= 2.50 ? 'Ótimo' :
+                      currentRph >= 38 && currentRpkm >= 2.00 ? 'Bom' :
+                      currentRph > 32 && currentRpkm > 1.80 ? 'Mediano' : 'Ruim';
+
+  const tierColors = {
+    'Ótimo': 'text-blue-600 dark:text-blue-500 bg-blue-50 dark:bg-blue-500/10 border-blue-100 dark:border-blue-500/20',
+    'Bom': 'text-green-600 dark:text-green-500 bg-green-50 dark:bg-green-500/10 border-green-100 dark:border-green-500/20',
+    'Mediano': 'text-orange-600 dark:text-orange-500 bg-orange-50 dark:bg-orange-500/10 border-orange-100 dark:border-orange-500/20',
+    'Ruim': 'text-red-600 dark:text-red-500 bg-red-50 dark:bg-red-500/10 border-red-100 dark:border-red-500/20'
+  };
+
+  const isRphAboveAvg = avgRph > 0 ? (currentRph >= avgRph) : true;
+  const isRpkmAboveAvg = avgRpkm > 0 ? (currentRpkm >= avgRpkm) : true;
+
+  // --- Fraction of Hour Math (Etapa 3) ---
+  const shiftStartMs = activeShift?.startTime ? ensureDate(activeShift.startTime).getTime() : Date.now();
+  const currentHourIndex = Math.floor(Math.max(0, Date.now() - shiftStartMs) / 3600000);
+  
+  let previousHourValue = 0;
+  let previousHourKm = 0;
+  let currentHourValue = 0;
+  let currentHourKm = 0;
+
+  if (activeShift && trips.length > 0) {
+    trips.forEach(trip => {
+      if (trip.isCancelled || trip.durationSeconds === 0) return;
+      
+      const tripEndMs = trip.timestamp ? ensureDate(trip.timestamp).getTime() : 
+                        (trip.startTime ? ensureDate(trip.startTime).getTime() : Date.now());
+      const differenceMs = tripEndMs - shiftStartMs;
+      const hIndex = Math.floor(Math.max(0, differenceMs) / 3600000);
+      
+      if (hIndex === currentHourIndex) {
+        currentHourValue += trip.value;
+        currentHourKm += trip.distanceKm;
+      } else if (hIndex === currentHourIndex - 1) {
+        previousHourValue += trip.value;
+        previousHourKm += trip.distanceKm;
+      }
+    });
+  }
+
+  const currentHourRpkm = currentHourKm > 0 ? currentHourValue / currentHourKm : 0;
+  const previousHourRpkm = previousHourKm > 0 ? previousHourValue / previousHourKm : 0;
+
+  // --- Alerts Logic ---
+  const alerts: any[] = [];
+
+  // Trend Alerts
+  if (previousHourRpkm > 0 && currentHourRpkm < previousHourRpkm - 0.2) {
+    alerts.push({
+      type: 'bad',
+      title: 'QUEDA DE RENDIMENTO NA HORA',
+      text: `Seu ganho p/ KM caiu de R$ ${previousHourRpkm.toFixed(2)} na última hora para R$ ${currentHourRpkm.toFixed(2)}.`
+    });
+  }
+
+  if (currentRpkm < 1.80) {
+    alerts.push({
+      type: 'bad',
+      title: 'QUEDA DE KM',
+      text: 'Seu ganho por KM caiu. Priorize corridas que paguem acima de R$2,00/km.'
+    });
+  } else if (currentRpkm >= 1.80 && currentRpkm < 2.00 && alerts.length === 0) {
+    alerts.push({
+      type: 'warning',
+      title: 'KM NO LIMITE',
+      text: 'Seu KM está mediano. Tente pegar viagens mais curtas e lucrativas.'
+    });
+  }
+
+  if (currentRph < 32 && alerts.length < 2) {
+    alerts.push({
+      type: 'bad',
+      title: 'QUEDA DE HORA',
+      text: 'Seu faturamento por hora caiu. Evite corridas longas.'
+    });
+  } else if (currentRph >= 32 && currentRph < 38 && alerts.length < 2) {
+    alerts.push({
+      type: 'warning',
+      title: 'HORA NO LIMITE',
+      text: 'Ritmo por hora mediano. Se afaste de trânsito intenso.'
+    });
+  }
+
+  if ((overallTier === 'Ótimo' || overallTier === 'Bom') && alerts.length === 0) {
+    alerts.push({
+      type: 'good',
+      title: 'BOM MOMENTO',
+      text: 'Alta performance hoje! Continue aceitando boas corridas nesse ritmo.'
+    });
+  }
+
+  // --- Dynamic Tip (Etapa 4) ---
+  let dynamicTip = null;
+  if (overallTier === 'Ruim') {
+     dynamicTip = {
+       target: 'Mediano',
+       msg: "Para voltar ao nível MEDIANO, sua próxima corrida precisa pagar no mínimo R$ 2,00/km."
+     };
+  } else if (overallTier === 'Mediano') {
+     dynamicTip = {
+       target: 'Bom',
+       msg: "Para subir ao nível BOM, sua próxima corrida precisa pagar no mínimo R$ 2,20/km."
+     };
+  } else if (overallTier === 'Bom') {
+     dynamicTip = {
+       target: 'Ótimo',
+       msg: "Para atingir ÓTIMO, filtre corridas acima de R$ 2,50/km."
+     };
+  } else {
+     dynamicTip = {
+       target: 'Manter',
+       msg: "Mantenha o padrão premium: aceite somente corridas acima de R$ 2,50/km."
+     };
+  }
+
+  const visibleAlerts = alerts.slice(0, 2);
+
+  return (
+    <div className="mt-6 p-5 rounded-3xl bg-gray-50 dark:bg-white/5 border border-gray-100 dark:border-white/10 flex flex-col gap-6 shadow-sm">
+      {/* Bloco 1 - Status Atual & Comparação */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+         <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+              Status Atual
+            </p>
+            <div className={cn("px-4 py-1.5 rounded-full border text-xs font-black uppercase tracking-widest inline-block shadow-sm", tierColors[overallTier])}>
+              {overallTier}
+            </div>
+         </div>
+         <div className="flex gap-6">
+            <div>
+               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/H</p>
+               <div className={cn("text-xs font-bold flex items-center gap-1", isRphAboveAvg ? "text-green-600 dark:text-green-400" : "text-red-500")}>
+                 {isRphAboveAvg ? <TrendingUp size={14} /> : <TrendingDown size={14} />} 
+                 {isRphAboveAvg ? 'Acima da média' : 'Abaixo da média'}
+               </div>
+            </div>
+            <div>
+               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/KM</p>
+               <div className={cn("text-xs font-bold flex items-center gap-1", isRpkmAboveAvg ? "text-green-600 dark:text-green-400" : "text-red-500")}>
+                 {isRpkmAboveAvg ? <TrendingUp size={14} /> : <TrendingDown size={14} />} 
+                 {isRpkmAboveAvg ? 'Acima da média' : 'Abaixo da média'}
+               </div>
+            </div>
+         </div>
+      </div>
+
+      <div className="h-px w-full bg-gray-200 dark:bg-white/10" />
+
+      {/* Frações de Hora (Etapa 3) */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white dark:bg-black/20 p-4 rounded-2xl border border-gray-200/60 dark:border-white/5 shadow-sm">
+          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1">
+            <Clock size={12} /> Hora H{currentHourIndex}
+          </p>
+          <div className="text-xl font-black text-gray-900 dark:text-white flex items-baseline gap-2">
+            R$ {previousHourValue.toFixed(2)}
+          </div>
+          <p className="text-xs font-bold text-gray-400 mt-1">R$ {previousHourRpkm.toFixed(2)}/km</p>
+        </div>
+        <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-2xl border border-green-100 dark:border-green-500/20 shadow-sm relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-2"><Sparkles size={16} className="text-green-500 opacity-20" /></div>
+          <p className="text-[10px] font-bold text-green-600 dark:text-green-500 uppercase tracking-widest mb-2 flex items-center gap-1">
+            <Activity size={12} /> Hora H{currentHourIndex + 1}
+          </p>
+          <div className="text-xl font-black text-green-700 dark:text-green-400 flex items-baseline gap-2">
+            R$ {currentHourValue.toFixed(2)}
+          </div>
+          <p className="text-xs font-bold text-green-600/70 dark:text-green-500/70 mt-1">R$ {currentHourRpkm.toFixed(2)}/km</p>
+        </div>
+      </div>
+
+      {/* Bloco 2 - Alertas Inteligentes */}
+      <div className="space-y-3 mt-2">
+        <div className="grid gap-3">
+          {visibleAlerts.map((alert, idx) => (
+            <div key={idx} className={cn("p-4 rounded-2xl border flex gap-3 items-start", 
+              alert.type === 'bad' ? 'bg-red-50 dark:bg-red-500/10 border-red-100 dark:border-red-500/20 text-red-900 dark:text-red-300' :
+              alert.type === 'warning' ? 'bg-orange-50 dark:bg-orange-500/10 border-orange-100 dark:border-orange-500/20 text-orange-900 dark:text-orange-200' :
+              'bg-green-50 dark:bg-green-500/10 border-green-100 dark:border-green-500/20 text-green-900 dark:text-green-300'
+            )}>
+              <div className="mt-0.5 p-1.5 rounded-lg bg-white/50 dark:bg-black/20">
+                {alert.type === 'bad' ? <TrendingDown size={14} className="text-red-600 dark:text-red-400" /> : 
+                 alert.type === 'warning' ? <AlertCircle size={14} className="text-orange-600 dark:text-orange-400" /> : 
+                 <TrendingUp size={14} className="text-green-600 dark:text-green-400" />}
+              </div>
+              <div className="flex-1">
+                 <p className={cn("text-[10px] font-black uppercase tracking-widest mb-1", 
+                   alert.type === 'bad' ? 'text-red-600 dark:text-red-400' : 
+                   alert.type === 'warning' ? 'text-orange-600 dark:text-orange-400' : 
+                   'text-green-600 dark:text-green-400'
+                 )}>
+                   {alert.title}
+                 </p>
+                 <p className="text-xs font-medium leading-relaxed opacity-80">{alert.text}</p>
+              </div>
+            </div>
+          ))}
+          
+          {/* Dynamic Tip (Etapa 4) */}
+          <div className="p-4 rounded-2xl border bg-blue-50 dark:bg-blue-500/10 border-blue-100 dark:border-blue-500/20 text-blue-900 dark:text-blue-200 flex gap-3 items-start">
+             <div className="mt-0.5 p-1.5 rounded-lg bg-white/50 dark:bg-black/20">
+               <Target size={14} className="text-blue-600 dark:text-blue-400" />
+             </div>
+             <div className="flex-1">
+                <p className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-1">Visando {dynamicTip.target}</p>
+                <p className="text-xs font-medium leading-relaxed opacity-80">{dynamicTip.msg}</p>
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Main App ---
 
 export default function App() {
@@ -234,7 +487,7 @@ export default function App() {
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showRealtimeAiModal, setShowRealtimeAiModal] = useState(false);
-  const [realtimeAiReport, setRealtimeAiReport] = useState<string | null>(null);
+  const [realtimeAiReport, setRealtimeAiReport] = useState<{ diag: string, filter: string, plan: string, tier: 'ruim' | 'mediano' | 'bom' | 'otimo' } | null>(null);
   const [isGeneratingRealtimeAi, setIsGeneratingRealtimeAi] = useState(false);
   const [parsedImportData, setParsedImportData] = useState<any[] | null>(null);
   const [importText, setImportText] = useState('');
@@ -603,7 +856,7 @@ ${importText}
 
       // Filter shifts
       const relevantShifts = shifts.filter(s => {
-        const d = s.startTime.toDate();
+        const d = ensureDate(s.startTime);
         return d >= startDate && d <= endDate;
       });
 
@@ -615,8 +868,8 @@ ${importText}
 
       // Prepare data for AI
       const dataForAi = relevantShifts.map(s => ({
-        data: format(s.startTime.toDate(), 'dd/MM/yyyy'),
-        horario: `${format(s.startTime.toDate(), 'HH:mm')} - ${s.endTime ? format(s.endTime.toDate(), 'HH:mm') : 'Em andamento'}`,
+        data: format(ensureDate(s.startTime), 'dd/MM/yyyy'),
+        horario: `${format(ensureDate(s.startTime), 'HH:mm')} - ${s.endTime ? format(ensureDate(s.endTime), 'HH:mm') : 'Em andamento'}`,
         faturamento: s.totalRevenue,
         km_rodado: s.totalWorkKm || (s.endKm ? s.endKm - s.startKm : 0),
         viagens: s.totalTrips,
@@ -1058,9 +1311,9 @@ REGRAS CRÍTICAS:
       if (diffRevenue !== 0) {
         const settingsRef = doc(db, 'settings', user.uid);
         const currentBalance = settings?.platformBalance || 0;
-        await updateDoc(settingsRef, {
+        await setDoc(settingsRef, {
           platformBalance: currentBalance + diffRevenue
-        });
+        }, { merge: true });
       }
       
       if (newKm && diffKm >= 0) {
@@ -1096,6 +1349,15 @@ REGRAS CRÍTICAS:
         totalTrips: increment(1),
         totalRevenue: increment(estimatedValue)
       });
+      
+      if (user) {
+        const settingsRef = doc(db, 'settings', user.uid);
+        const currentBalance = settings?.platformBalance || 0;
+        await setDoc(settingsRef, {
+          platformBalance: currentBalance + estimatedValue
+        }, { merge: true });
+      }
+      
       setShowQuickTripModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `shifts/${activeShift.id}/trips`);
@@ -1180,9 +1442,9 @@ REGRAS CRÍTICAS:
       
       if (diffRevenue !== 0) {
         const currentBalance = settings?.platformBalance || 0;
-        await updateDoc(doc(db, 'settings', user.uid), {
+        await setDoc(doc(db, 'settings', user.uid), {
           platformBalance: currentBalance + diffRevenue
-        });
+        }, { merge: true });
       }
 
       setShowFinishModal(false);
@@ -1238,9 +1500,9 @@ REGRAS CRÍTICAS:
 
       // 2. Update platform balance in settings
       const settingsRef = doc(db, 'settings', user.uid);
-      batch.update(settingsRef, {
+      batch.set(settingsRef, {
         platformBalance: (settings.platformBalance || 0) + value
-      });
+      }, { merge: true });
 
       // 3. Update shift totalRevenue (Optimistic/Synchronous update for the shift)
       const shiftRef = doc(db, 'shifts', selectedShiftId);
@@ -1391,9 +1653,9 @@ REGRAS CRÍTICAS:
       batch.update(feRef, { lastPaidMonth: currentMonthStr });
       
       const settingsRef = doc(db, 'settings', user.uid);
-      batch.update(settingsRef, {
+      batch.set(settingsRef, {
         platformBalance: (settings.platformBalance || 0) - fe.amount
-      });
+      }, { merge: true });
       
       await batch.commit();
       setSettings(prev => prev ? { ...prev, platformBalance: (prev.platformBalance || 0) - fe.amount } : null);
@@ -1423,9 +1685,9 @@ REGRAS CRÍTICAS:
       // 2. Subtract from platform balance
       const newBalance = (settings.platformBalance || 0) - amount;
       const settingsRef = doc(db, 'settings', user.uid);
-      batch.update(settingsRef, {
+      batch.set(settingsRef, {
         platformBalance: newBalance
-      });
+      }, { merge: true });
 
       // 3. If there is a fee, record it as a "Taxa Bancária/Saque" expense
       if (fee > 0) {
@@ -1450,9 +1712,9 @@ REGRAS CRÍTICAS:
   const updatePlatformBalance = async (newBalance: number) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, 'settings', user.uid), {
+      await setDoc(doc(db, 'settings', user.uid), {
         platformBalance: newBalance
-      });
+      }, { merge: true });
       setShowUpdateBalanceModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `settings/${user.uid}`);
@@ -1630,7 +1892,7 @@ REGRAS CRÍTICAS:
       }
 
       const recentShifts = filteredShiftsForAi
-        .sort((a, b) => (b.startTime?.toMillis() || 0) - (a.startTime?.toMillis() || 0))
+        .sort((a, b) => (ensureDate(b.startTime).getTime()) - (ensureDate(a.startTime).getTime()))
         .slice(0, 100);
 
       const shiftsDataForAI = recentShifts.map(s => {
@@ -1753,13 +2015,12 @@ REGRAS CRÍTICAS:
   const generateRealtimeAiAnalysis = async () => {
     if (!user || !activeShift) return;
     setIsGeneratingRealtimeAi(true);
-    setShowRealtimeAiModal(true);
     setRealtimeAiReport(null);
 
     try {
       const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
       if (!apiKeyToUse) {
-        setRealtimeAiReport("Chave API do Gemini não encontrada nos Ajustes.");
+        setRealtimeAiReport({ diag: "Chave API do Gemini não encontrada nos Ajustes.", filter: "", plan: "", tier: "ruim" });
         setIsGeneratingRealtimeAi(false);
         return;
       }
@@ -1805,28 +2066,49 @@ Fale de forma enérgica, analítica e de resposta rápida (Estilo telemetria da 
 - Rodando há: ${currentHours.toFixed(1)}h
 - Eficiência / Volume: ${qtdTrips} corridas feitas
 - Faturamento Atual: R$ ${activeShift.totalRevenue.toFixed(2)}
-- Ritmo Financeiro: R$ ${currentRph.toFixed(2)}/Hora  &  R$ ${currentRpkm.toFixed(2)}/Km
+- Ritmo Financeiro (Atual): R$ ${currentRph.toFixed(2)}/Hora  &  R$ ${currentRpkm.toFixed(2)}/Km
+
+[REGRA DE TIER DE DESEMPENHO]
+- ruim (Vermelho): <= R$ 1.80/km e/ou <= R$ 32/hr
+- mediano (Laranja): 1.80 a 2.00/km e/ou 32 a 38/hr
+- bom (Verde): 2.00 a 2.50/km e/ou 38 a 42/hr 
+- otimo (Azul): > 2.50/km e/ou > 42/hr
 
 [TENDÊNCIA HISTÓRICA DO HORÁRIO (Últ. 30 dias)]
 - Hora Atual (${currentHour}h): Média Histórica de R$ ${histCurrent.rph.toFixed(2)}/h (Base: ${histCurrent.count} corridas)
 - Próxima Hora (${nextHour}h): Média Histórica de R$ ${histNext.rph.toFixed(2)}/h (Base: ${histNext.count} corridas)
 
-SUA MISSÃO EM 3 PONTOS (Use Markdown e BULLETS curtos):
-* 🎯 Diagnóstico Atual: Avalie como ele está agora. Baseado nos Rs/Hora, quão rápido ele está gerando lucro? Se a próxima hora não for historicamente boa, vale a pena continuar ou ele está operando em declínio?
-* 🚀 Filtro Rígido Recomendado: Para reverter/acabar o turno ou turbinar horas boas, dê o filtro de exigência de preço para aceitar corrida agora (ex: Corridas de >R$ 1.80/Km).
-* 🚦 Plano Imediato: Responda diretamente - MANTER RITMO, AUMENTAR RIGOR, PAUSAR PARA RECUPERAR ou DESLOGAR E DESCANSAR.
+SUA MISSÃO: Retorne um objeto JSON estrito com as chaves "diag", "filter", "plan" e "tier".
 
-NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
+- "diag": Diagnóstico do momento (max 120 chars). Se baseie no Ritmo Financeiro e nas Regras de Tier.
+- "filter": O filtro rígido de R$/KM e R$/H sugerido para agora (max 100 chars).
+- "plan": MANTER RITMO, AUMENTAR RIGOR, PAUSAR PARA RECUPERAR, ou DESLOGAR E DESCANSAR.
+- "tier": Uma das strings exatas com base no Ritmo Atual: "ruim", "mediano", "bom", ou "otimo".
+
+Exemplo de retorno:
+{
+  "diag": "Ritmo P1! R$ 51.52/h é agressivo. Sem histórico para comparar...",
+  "filter": "Exija > R$ 2.10/km para blindar o lucro.",
+  "plan": "MANTER RITMO",
+  "tier": "otimo"
+}`;
 
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
+        config: {
+          responseMimeType: "application/json"
+        }
       });
 
-      setRealtimeAiReport(response.text || "Erro ao gerar análise.");
+      if (response.text) {
+        setRealtimeAiReport(JSON.parse(response.text));
+      } else {
+        setRealtimeAiReport({ diag: "Erro ao gerar análise.", filter: "", plan: "", tier: "ruim" });
+      }
     } catch (err) {
       console.error(err);
-      setRealtimeAiReport("Erro de comunicação com a IA.");
+      setRealtimeAiReport({ diag: "Erro de comunicação com a IA.", filter: "", plan: "", tier: "ruim" });
     } finally {
       setIsGeneratingRealtimeAi(false);
     }
@@ -2197,7 +2479,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
     const totalTrips = filteredShifts.reduce((acc, s) => acc + s.totalTrips, 0);
     
     // Personal KM logic: Sum of totalPersonalKm within shifts, and calculate gaps for old shifts
-    const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (a.startTime?.toMillis() || 0) - (b.startTime?.toMillis() || 0));
+    const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
     let totalKmPersonal = 0;
     
     filteredShifts.forEach(filteredShift => {
@@ -2264,8 +2546,8 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
     // Hour Heatmap Analysis
     const hourStats: Record<number, { count: number, totalVal: number, totalSecs: number }> = {};
     validTrips.forEach(t => {
-      if (t.startTime) {
-        const hour = t.startTime.toDate().getHours();
+      if (t.startTime || t.timestamp) {
+        const hour = ensureDate(t.startTime || t.timestamp).getHours();
         if (!hourStats[hour]) hourStats[hour] = { count: 0, totalVal: 0, totalSecs: 0 };
         hourStats[hour].count += 1;
         hourStats[hour].totalVal += t.value;
@@ -2286,8 +2568,8 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
     // Best Day Analysis
     const dayStats: Record<number, { count: number, totalVal: number, totalSecs: number }> = {};
     validTrips.forEach(t => {
-      if (t.startTime) {
-        const day = t.startTime.toDate().getDay(); 
+      if (t.startTime || t.timestamp) {
+        const day = ensureDate(t.startTime || t.timestamp).getDay(); 
         if (!dayStats[day]) dayStats[day] = { count: 0, totalVal: 0, totalSecs: 0 };
         dayStats[day].count += 1;
         dayStats[day].totalVal += t.value;
@@ -2404,11 +2686,17 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
     const totalWorkKm = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalWorkKm) || 0), 0);
     const totalPersonalKm = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalPersonalKm) || 0), 0);
     const totalKmDrivenToday = totalWorkKm + totalPersonalKm;
+    const avgTripValue = totalTrips > 0 ? totalRevenue / totalTrips : 0;
+    const currentRph = totalTime > 0 ? (totalRevenue / (totalTime / 3600)) : 0;
+    const currentRpkm = totalWorkKm > 0 ? (totalRevenue / totalWorkKm) : 0;
 
     return { 
       totalRevenue, 
       totalTime, 
       totalTrips, 
+      avgTripValue,
+      currentRph,
+      currentRpkm,
       startKm, 
       maxKm,
       totalWorkKm,
@@ -2838,88 +3126,119 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                     >
                       Nova Corrida
                     </Button>
-
-                    <div className="mt-8 space-y-4">
-                       <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Telemetria de Estado</h3>
-                       <div className="bg-black/20 p-1.5 rounded-2xl flex gap-1 border border-white/5">
-                          {[
-                            { id: 'idle', label: 'Parado', icon: Coffee, activeColor: 'text-gray-300', activeBg: 'bg-[#1F2937] shadow-lg border-gray-600/50' },
-                            { id: 'dispatch', label: 'Buscando', icon: Compass, activeColor: 'text-green-400', activeBg: 'bg-green-500/20 shadow-lg border-green-500/30' },
-                            { id: 'ride', label: 'Corrida', icon: Users, activeColor: 'text-green-400', activeBg: 'bg-green-500/20 shadow-lg border-green-500/30' }
-                          ].map((state) => (
-                            <button
-                              key={state.id}
-                              onClick={() => changeShiftState(state.id as any)}
-                              className={cn(
-                                "flex-1 flex flex-col items-center justify-center p-3 rounded-xl border transition-all duration-300",
-                                activeShift.currentState === state.id 
-                                  ? state.activeBg
-                                  : "border-transparent opacity-50 hover:bg-white/5 hover:opacity-100"
-                              )}
-                            >
-                               <state.icon size={20} className={cn("mb-1.5", activeShift.currentState === state.id ? state.activeColor : "text-gray-500")} />
-                               <span className={cn("text-[9px] font-black uppercase tracking-widest", activeShift.currentState === state.id ? state.activeColor : "text-gray-500")}>
-                                 {state.label}
-                               </span>
-                            </button>
-                          ))}
-                       </div>
-                    </div>
                   </div>
                 )}
 
                 {activeShift?.status === 'active' && (
-                  <div className="grid grid-cols-2 gap-3 mt-6 relative z-10 pt-6 border-t border-white/10">
-                    <Button 
-                      onClick={() => setShowPartialRevenueModal(true)} 
-                      variant="outline" 
-                      className={cn(
-                        "w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-500",
-                        elapsedTime >= 3600 && (elapsedTime % 3600) < 300 
-                          ? "animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)] border-red-500/50 bg-red-500/10 text-red-400" 
-                          : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
-                      )}
-                      icon={Wallet}
-                    >
-                      Caixa Parcial
-                    </Button>
-                    <Button 
-                      onClick={() => generateRealtimeAiAnalysis()} 
-                      variant="outline" 
-                      className="w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white shadow-[0_0_15px_rgba(37,99,235,0.1)] transition-all"
-                      icon={Sparkles}
-                    >
-                      Copiloto IA
-                    </Button>
-                  </div>
+                  <>
+                    <div className="grid grid-cols-2 gap-3 mt-6 relative z-10 pt-6 border-t border-white/10">
+                      <Button 
+                        onClick={() => setShowPartialRevenueModal(true)} 
+                        variant="outline" 
+                        className={cn(
+                          "w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-500",
+                          elapsedTime >= 3600 && (elapsedTime % 3600) < 300 
+                            ? "animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)] border-red-500/50 bg-red-500/10 text-red-400" 
+                            : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
+                        )}
+                        icon={Wallet}
+                      >
+                        Caixa Parcial
+                      </Button>
+                      <Button 
+                        onClick={() => generateRealtimeAiAnalysis()} 
+                        variant="outline" 
+                        className="w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white shadow-[0_0_15px_rgba(37,99,235,0.1)] transition-all"
+                        icon={Sparkles}
+                        disabled={isGeneratingRealtimeAi}
+                      >
+                        {isGeneratingRealtimeAi ? "Analisando..." : "Copiloto IA"}
+                      </Button>
+                    </div>
+                    
+                    {realtimeAiReport && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, height: 0 }} 
+                        animate={{ opacity: 1, y: 0, height: 'auto' }} 
+                        className={cn(
+                          "mt-4 p-4 rounded-2xl border flex flex-col gap-3 relative z-10",
+                          realtimeAiReport.tier === 'otimo' ? 'bg-blue-500/10 border-blue-500/20' :
+                          realtimeAiReport.tier === 'bom' ? 'bg-green-500/10 border-green-500/20' :
+                          realtimeAiReport.tier === 'mediano' ? 'bg-orange-500/10 border-orange-500/20' :
+                          'bg-red-500/10 border-red-500/20'
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                             <Sparkles size={16} className={cn(
+                                 realtimeAiReport.tier === 'otimo' ? 'text-blue-400' :
+                                 realtimeAiReport.tier === 'bom' ? 'text-green-400' :
+                                 realtimeAiReport.tier === 'mediano' ? 'text-orange-400' :
+                                 'text-red-400'
+                             )} />
+                             <span className={cn(
+                               "text-[10px] uppercase font-black tracking-widest",
+                                 realtimeAiReport.tier === 'otimo' ? 'text-blue-400' :
+                                 realtimeAiReport.tier === 'bom' ? 'text-green-400' :
+                                 realtimeAiReport.tier === 'mediano' ? 'text-orange-400' :
+                                 'text-red-400'
+                             )}>Análise em Tempo Real</span>
+                          </div>
+                          <button onClick={() => setRealtimeAiReport(null)} className="text-gray-400 hover:text-white">
+                             <X size={14} />
+                          </button>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <p className="text-xs text-white leading-relaxed">
+                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🎯 Diag:</span> 
+                            {realtimeAiReport.diag}
+                          </p>
+                          <p className="text-xs text-white leading-relaxed">
+                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🚀 Filtro:</span> 
+                            {realtimeAiReport.filter}
+                          </p>
+                          <p className="text-xs text-white leading-relaxed">
+                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🚦 Plano:</span> 
+                            <span className="font-black">{realtimeAiReport.plan}</span>
+                          </p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </>
                 )}
               </div>
 
               {settings && planningMetrics && (
-                <div className="bg-white dark:bg-[#0B0F14] rounded-3xl p-6 border border-gray-200 dark:border-[#1F2937] shadow-sm">
-                  <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Meta Diária Agressiva</h3>
+                <div className="bg-gradient-to-br from-indigo-900 via-[#0B0F14] to-black rounded-3xl p-6 border border-indigo-500/20 shadow-xl overflow-hidden relative">
+                  {/* Decorative faint glow */}
+                  <div className="absolute -top-24 -right-24 w-64 h-64 bg-indigo-500/10 blur-[60px] rounded-full pointer-events-none" />
                   
-                  <div className="space-y-5">
+                  <h3 className="text-[11px] font-black text-indigo-300/80 uppercase tracking-widest mb-6 flex items-center gap-2">
+                    <Target size={12} className="text-indigo-400" /> Meta Diária Agressiva
+                  </h3>
+                  
+                  <div className="space-y-6 relative z-10">
                     <div className="flex justify-between items-end mb-2">
                       <div>
-                        <p className={cn("text-4xl font-black leading-none", (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 ? "text-green-500 drop-shadow-[0_0_10px_rgba(34,197,94,0.4)]" : "text-gray-900 dark:text-white")}>
-                          {Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-xl text-gray-400 ml-1">%</span>
+                        <p className={cn("text-5xl font-black leading-none tracking-tighter", (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 ? "text-green-400 drop-shadow-[0_0_15px_rgba(74,222,128,0.5)]" : "text-white")}>
+                          {Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-2xl text-indigo-300 ml-1 opacity-60">%</span>
                         </p>
                       </div>
                       <div className="text-right">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1">Progresso Real</p>
-                        <p className="font-bold text-sm text-gray-900 dark:text-white">
-                          <span className="text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</span> / <span className="text-gray-400">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span>
+                        <p className="text-[10px] font-bold text-indigo-300/80 uppercase tracking-widest mb-1.5">Progresso Real</p>
+                        <p className="font-bold text-sm text-white bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
+                          <span className="text-green-400">R$ {todayMetrics.totalRevenue.toFixed(2)}</span> <span className="text-indigo-400 opacity-60 mx-1">/</span> <span className="text-indigo-200">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span>
                         </p>
                       </div>
                     </div>
                     
-                    <div className="relative pt-1 pb-1">
-                       <div className="h-6 rounded-full bg-gray-100 dark:bg-[#1F2937] w-full overflow-hidden relative border border-gray-200 dark:border-gray-800">
+                    <div className="relative pt-2 pb-1">
+                       <div className="h-6 rounded-full bg-black/60 w-full overflow-hidden relative border border-indigo-500/20 backdrop-blur-sm">
                          {/* Track Grid */}
                          <div className="absolute inset-0 w-full flex pointer-events-none">
                             {[25, 50, 75].map(mark => (
-                              <div key={mark} className="flex-1 border-r border-gray-300 dark:border-gray-700/50 opacity-40 z-10 last:border-0" />
+                              <div key={mark} className="flex-1 border-r border-indigo-400/20 z-20 last:border-0" />
                             ))}
                          </div>
                          
@@ -2927,16 +3246,12 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                          <motion.div 
                            initial={{ width: 0 }}
                            animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%` }}
-                           transition={{ duration: 1, type: "spring", stiffness: 50 }}
+                           transition={{ duration: 1.5, type: "spring", stiffness: 40 }}
                            className={cn(
                              "h-full absolute left-0 top-0 bottom-0 z-10 transition-colors duration-500 rounded-full", 
                              (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 
-                               ? "bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]" 
-                               : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.75
-                               ? "bg-green-400"
-                               : (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 0.5
-                               ? "bg-yellow-500"
-                               : "bg-green-500"
+                               ? "bg-gradient-to-r from-green-500 to-green-400 shadow-[0_0_20px_rgba(74,222,128,0.5)]" 
+                               : "bg-gradient-to-r from-indigo-500 to-indigo-400"
                            )}
                          >
                             <div className="absolute inset-0 bg-white/30" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
@@ -2944,11 +3259,11 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                        </div>
                     </div>
                     
-                    <div className="bg-green-50 dark:bg-[#1F2937] p-4 rounded-2xl border border-transparent dark:border-gray-800">
-                      <p className="text-[11px] text-green-800 dark:text-gray-300 font-medium leading-relaxed uppercase tracking-wide">
-                        <span className="text-green-600 dark:text-green-400 font-black">Faltam R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para o green. 
+                    <div className="bg-indigo-950/40 p-4 rounded-2xl border border-indigo-500/20 backdrop-blur-md">
+                      <p className="text-[11px] text-indigo-200 font-medium leading-relaxed uppercase tracking-wide">
+                        <span className="text-green-400 font-black">Faltam R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para o green. 
                         {todayMetrics.totalTime > 0 && todayMetrics.totalRevenue > 0 ? (
-                           <> No ritmo atual de <span className="text-white font-bold bg-green-500/20 px-1 py-0.5 rounded">R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h</span>, meta atingida em <span className="font-black text-white">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span>.</>
+                           <> No ritmo atual de <span className="text-white font-bold bg-indigo-500/30 px-1.5 py-0.5 rounded text-[10px]">R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h</span>, meta atingida em <span className="font-black text-white">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span>.</>
                         ) : ' Inicie o trajeto para prever ETA de lucro.'}
                       </p>
                     </div>
@@ -2957,47 +3272,73 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
               )}
 
               {/* Resumo do Dia */}
-              <div className="bg-white dark:bg-[#0B0F14] rounded-3xl p-6 border border-gray-200 dark:border-[#1F2937] shadow-sm space-y-6">
-                <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">Desempenho Real (Dia)</h3>
+              <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 dark:from-gray-800 dark:via-gray-700 dark:to-gray-800" />
                 
-                <div className="grid grid-cols-2 gap-x-4 gap-y-6">
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Ganhos do Dia</p>
-                     <p className="text-xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Tempo Total</p>
-                     <p className="text-xl font-black text-gray-900 dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
-                  </div>
-                  <div className="col-span-2 h-px bg-gray-100 dark:bg-gray-800/50" />
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$ / Hora Atual</p>
-                     <p className={cn("text-xl font-black", todayMetrics.totalTime > 0 && (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) >= 30 ? "text-green-500" : "text-gray-900 dark:text-white")}>
-                       R$ {todayMetrics.totalTime > 0 ? (todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2) : '0.00'}
-                     </p>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$ / KM Parcial</p>
-                     <p className="text-xl font-black text-green-600 dark:text-green-400">R$ {todayMetrics.totalWorkKm > 0 ? (todayMetrics.totalRevenue / todayMetrics.totalWorkKm).toFixed(2) : '0.00'}</p>
-                  </div>
-                  <div className="col-span-2 h-px bg-gray-100 dark:bg-gray-800/50" />
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Users size={12} />Corridas</p>
-                     <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.totalTrips}</p>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Target size={12} />KM Atual Turno</p>
-                     <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km</p>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><Navigation size={12} />KM Diário Inicial</p>
-                     <p className="text-xl font-bold text-gray-500">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km</p>
-                  </div>
-                  <div>
-                     <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingUp size={12} />Total Rodado Hoje</p>
-                     <p className="text-xl font-black text-indigo-600 dark:text-indigo-400">{todayMetrics.totalKmDrivenToday.toFixed(1)} km</p>
-                  </div>
+                <div className="p-6 pb-4">
+                   <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Desempenho Real (Dia)</h3>
+                   <div className="grid grid-cols-2 gap-4">
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><DollarSign size={12} className="text-gray-400" /> Ganhos</p>
+                        <p className="text-2xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
+                     </div>
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Clock size={12} className="text-gray-400" /> Tempo</p>
+                        <p className="text-2xl font-black text-gray-900 dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
+                     </div>
+                     
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <div className="flex gap-2 items-center mb-2">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><Activity size={12} className="text-gray-400" /> R$ / Hora</p>
+                        </div>
+                        <p className={cn("text-xl font-black mb-1.5", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).color : "text-gray-900 dark:text-white")}>
+                          R$ {todayMetrics.currentRph.toFixed(2)}
+                        </p>
+                        {todayMetrics.currentRph > 0 && <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase inline-block", getRphTier(todayMetrics.currentRph).bg, getRphTier(todayMetrics.currentRph).color)}>{getRphTier(todayMetrics.currentRph).label}</span>}
+                     </div>
+                     
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <div className="flex gap-2 items-center mb-2">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><MapPin size={12} className="text-gray-400" /> R$ / KM</p>
+                        </div>
+                        <p className={cn("text-xl font-black mb-1.5", todayMetrics.currentRpkm > 0 ? getRpkmTier(todayMetrics.currentRpkm).color : "text-gray-900 dark:text-white")}>
+                          R$ {todayMetrics.currentRpkm.toFixed(2)}
+                        </p>
+                        {todayMetrics.currentRpkm > 0 && <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase inline-block", getRpkmTier(todayMetrics.currentRpkm).bg, getRpkmTier(todayMetrics.currentRpkm).color)}>{getRpkmTier(todayMetrics.currentRpkm).label}</span>}
+                     </div>
+                     
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Users size={12} className="text-gray-400" /> Corridas</p>
+                        <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.totalTrips}</p>
+                     </div>
+                     
+                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Wallet size={12} className="text-gray-400" /> Ticket Méd.</p>
+                        <p className="text-xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.avgTripValue.toFixed(2)}</p>
+                     </div>
+                   </div>
+                   
+                   <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800">
+                     <div className="flex items-center justify-between mb-2">
+                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><TrendingUp size={12} /> Trabalho Realizado</p>
+                       <span className="text-[10px] font-bold text-gray-400">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km inicial ➔ {todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km atual</span>
+                     </div>
+                     <p className="text-2xl font-black text-gray-900 dark:text-white">{todayMetrics.totalWorkKm.toFixed(1)} <span className="text-sm font-bold text-gray-400 uppercase">km</span></p>
+                   </div>
                 </div>
+                
+                {todayMetrics.currentRph > 0 && todayMetrics.currentRpkm > 0 && (
+                   <div className="px-6 pb-6 mt-auto">
+                     <LiveShiftAnalysis 
+                       currentRph={todayMetrics.currentRph} 
+                       currentRpkm={todayMetrics.currentRpkm} 
+                       avgRph={planningMetrics?.avgRph || 0}
+                       avgRpkm={planningMetrics?.avgRpkm || 0}
+                       activeShift={activeShift}
+                       trips={activeShift ? (shiftTrips[activeShift.id] || []) : []}
+                     />
+                   </div>
+                )}
               </div>
 
               {activeShift?.status === 'active' && (
@@ -3060,21 +3401,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                 </div>
               )}
 
-              {activeShift?.status === 'active' && (
-                <div className="mt-8">
-                  <Button 
-                    onClick={() => {
-                        setAnalysisFilter('day');
-                        setAnalysisQuery('Devo continuar rodando agora? Faça uma análise de custo/benefício rápida (max 200 caracteres), estou rodando agora.');
-                        handleHistoryAIAnalysis();
-                    }}
-                    className="w-full py-4 rounded-2xl bg-gradient-to-r from-green-600 to-indigo-600 hover:from-green-700 hover:to-indigo-700 text-white shadow-xl shadow-green-200 dark:shadow-none transition-all group overflow-hidden relative flex items-center justify-center gap-2"
-                  >
-                    <Sparkles size={18} />
-                    <span>IA: Devo Continuar?</span>
-                  </Button>
-                </div>
-              )}
+
             </motion.div>
           )}
 
@@ -3105,8 +3432,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                     <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", historyFilter === 'month' ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}>Mês</button>
                   </div>
 
-                  {historyFilter !== 'all' && (
-                    <div className="flex items-center justify-between sm:justify-start gap-4 bg-white dark:bg-gray-800/50 p-1.5 rounded-[20px] border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
+                  <div className="flex items-center justify-between sm:justify-start gap-4 bg-white dark:bg-gray-800/50 p-1.5 rounded-[20px] border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
                       <button 
                         onClick={prevHistoryRange}
                         className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
@@ -3124,7 +3450,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                         <ChevronRight size={18} />
                       </button>
                     </div>
-                  )}
+                  
                   
                   <div className="flex items-center space-x-2 w-full sm:w-auto">
                      <button onClick={() => setHistoryPendingOnly(!historyPendingOnly)} className={cn("flex-1 flex gap-2 items-center justify-center py-3.5 px-6 text-xs font-black uppercase tracking-widest rounded-[20px] transition-all duration-300 border", historyPendingOnly ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]" : "bg-white dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 border-gray-200/50 dark:border-gray-700/50 hover:text-gray-800 dark:hover:text-gray-200 shadow-sm")}>
@@ -3212,8 +3538,11 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                 <div className="flex items-center gap-1.5 bg-green-50 dark:bg-[#22C55E]/10 border border-green-100 dark:border-[#22C55E]/20 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-green-600 dark:text-[#22C55E]">
                                   <DollarSign size={12} /> R$ {group.totalRevenue.toFixed(2)}
                                 </div>
-                                <div className="flex items-center gap-1.5 text-[11px] font-black tracking-widest uppercase text-gray-500 dark:text-gray-400 pl-1 sm:border-l sm:pl-3 border-gray-200 dark:border-gray-700">
-                                  <TrendingUp size={12} className="text-emerald-500" /> R$ {rph.toFixed(2)}/h
+                                <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase", getRphTier(rph).bg, getRphTier(rph).color)}>
+                                  <TrendingUp size={12} /> R$ {rph.toFixed(2)}/h
+                                </div>
+                                <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase", getRpkmTier(rpkm).bg, getRpkmTier(rpkm).color)}>
+                                  <MapPin size={12} /> R$ {rpkm.toFixed(2)}/km
                                 </div>
                               </div>
                             </div>
@@ -3307,12 +3636,12 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                                   
                                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 pt-4 border-t border-gray-100 dark:border-gray-800">
                                     <div className="flex items-center gap-4">
-                                      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400">
-                                        <span className="text-green-500">{shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}</span>/km
+                                      <div className={cn("flex items-center gap-1.5 text-xs font-black uppercase tracking-wider", shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? getRpkmTier(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).color : "text-gray-500")}>
+                                        {shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}/km
                                       </div>
                                       <div className="w-1.5 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-full" />
-                                      <div className="flex items-center gap-1.5 text-xs font-bold text-gray-500 dark:text-gray-400">
-                                        <span className="text-green-500">{shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}</span>/h
+                                      <div className={cn("flex items-center gap-1.5 text-xs font-black uppercase tracking-wider", shift.activeTimeSeconds > 0 ? getRphTier(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).color : "text-gray-500")}>
+                                        {shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}/h
                                       </div>
                                     </div>
 
@@ -3792,7 +4121,7 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
                            </div>
                            <div>
                              <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">Transferência</p>
-                             <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mt-0.5">{format(w.date.toDate(), 'dd/MM/yyyy • HH:mm')}</p>
+                             <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mt-0.5">{format(ensureDate(w.date), 'dd/MM/yyyy • HH:mm')}</p>
                            </div>
                         </div>
                         <div className="text-right">
@@ -5082,23 +5411,6 @@ NÃO ENROLE. VOCÊ TEM NO MAX 250 CARACTERES DE RESPOSTA, SEJA CIRÚRGICO.`;
 
 
 
-      <Modal isOpen={showRealtimeAiModal} onClose={() => setShowRealtimeAiModal(false)} title="Análise Rápida de Turno (IA)">
-        <div className="space-y-6">
-          {isGeneratingRealtimeAi ? (
-            <div className="flex flex-col items-center justify-center py-12 space-y-4">
-              <div className="w-10 h-10 border-4 border-green-500 border-t-transparent rounded-full animate-spin" />
-              <p className="text-gray-500 font-medium">A IA está analisando seu turno e o histórico das próximas horas...</p>
-            </div>
-          ) : (
-            <div className="prose dark:prose-invert max-w-none text-sm space-y-2">
-              <Markdown>{realtimeAiReport || ''}</Markdown>
-            </div>
-          )}
-          <Button onClick={() => setShowRealtimeAiModal(false)} className="w-full" variant="outline">
-            Fechar
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }
@@ -5178,7 +5490,7 @@ function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
 }
 
 function PauseShiftForm({ onSubmit, currentRevenue, initialKm }: { onSubmit: (revenue: number, km: number, autonomy: number) => void, currentRevenue: number, initialKm: number }) {
-  const [revenue, setRevenue] = useState(currentRevenue.toString());
+  const [revenue, setRevenue] = useState(currentRevenue?.toString() || '0');
   const [km, setKm] = useState(initialKm ? initialKm.toString() : '');
   const [autonomy, setAutonomy] = useState('');
   return (
@@ -5287,8 +5599,8 @@ function FinishShiftForm({ onSubmit, currentRevenue, initialKm, todayTripsSoFar,
   const [km, setKm] = useState(initialKm ? initialKm.toString() : '');
   const [autonomy, setAutonomy] = useState('');
   const [avgCons, setAvgCons] = useState('');
-  const [revenue, setRevenue] = useState(currentRevenue.toString());
-  const [totalDayTrips, setTotalDayTrips] = useState((todayTripsSoFar + currentShiftTrips).toString());
+  const [revenue, setRevenue] = useState(currentRevenue?.toString() || '0');
+  const [totalDayTrips, setTotalDayTrips] = useState(((todayTripsSoFar || 0) + (currentShiftTrips || 0)).toString());
   
   const calculatedShiftTrips = Math.max(0, Number(totalDayTrips) - todayTripsSoFar);
 
@@ -5318,8 +5630,8 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
 }) {
   const [date, setDate] = useState(initialData ? format((initialData.date?.toDate() || new Date()), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [category, setCategory] = useState<Expense['category']>(initialData ? initialData.category : 'Manutenção');
-  const [value, setValue] = useState(initialData ? initialData.value.toString() : '');
-  const [km, setKm] = useState(initialData ? initialData.kmAtExpense.toString() : '');
+  const [value, setValue] = useState(initialData?.value?.toString() || '');
+  const [km, setKm] = useState(initialData?.kmAtExpense?.toString() || '');
   const [paymentMethod, setPaymentMethod] = useState<'Pix' | 'Crédito'>(initialData?.paymentMethod || 'Pix');
   const [installments, setInstallments] = useState(initialData?.installments?.toString() || '1');
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
@@ -5557,12 +5869,13 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
   useEffect(() => {
     if (viewMode === 'edit') {
        const trip = sortedTrips[editIndex];
-       if (trip) {
-         setTimeStr(trip.startTime ? format(trip.startTime.toDate(), "HH:mm") : "");
-         setValueStr(trip.value.toString());
-         setDistanceStr(trip.distanceKm ? trip.distanceKm.toString() : "");
-         const mins = Math.floor(trip.durationSeconds / 60);
-         const secs = Math.floor(trip.durationSeconds % 60);
+      if (trip) {
+         setTimeStr(trip.startTime ? format(ensureDate(trip.startTime), "HH:mm") : (trip.timestamp ? format(ensureDate(trip.timestamp), "HH:mm") : ""));
+         setValueStr((trip.value || 0).toString());
+         setDistanceStr((trip.distanceKm || 0).toString());
+         const duration = trip.durationSeconds || 0;
+         const mins = Math.floor(duration / 60);
+         const secs = Math.floor(duration % 60);
          setDurationStr(`${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`);
          if (trip.dynamicValue && trip.dynamicValue > 0) {
            setIsDynamic(true);
@@ -5971,8 +6284,8 @@ function UpdateBalanceForm({ onSubmit, currentBalance }: {
 function SettingsForm({ settings, onSubmit, onBackup }: { settings: UserSettings, onSubmit: (data: Partial<UserSettings>) => void, onBackup: () => void }) {
   const [maintPerc, setMaintPerc] = useState((settings.maintenancePercentage ?? 10).toString());
   const [monthlyNet, setMonthlyNet] = useState((settings.monthlyNetGoal || 2000).toString());
-  const [fuel, setFuel] = useState(settings.defaultFuelPrice.toString());
-  const [cons, setCons] = useState(settings.avgConsumption.toString());
+  const [fuel, setFuel] = useState((settings.defaultFuelPrice || 5.50).toString());
+  const [cons, setCons] = useState((settings.avgConsumption || 12).toString());
   const [geminiKey, setGeminiKey] = useState(settings.geminiApiKey || '');
   
   const [oilInt, setOilInt] = useState((settings.oilChangeInterval || 10000).toString());
