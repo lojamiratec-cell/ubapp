@@ -5463,27 +5463,49 @@ function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
 function StartShiftForm({ onSubmit, initialKm }: { onSubmit: (km: number, autonomy: number) => void, initialKm: number }) {
   const [km, setKm] = useState(initialKm ? initialKm.toString() : '');
   const [autonomy, setAutonomy] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   return (
     <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <Input label="KM Total do Painel" type="number" inputMode="numeric" value={km} onChange={e => setKm(e.target.value)} placeholder="Ex: 45000" />
       <Input label="Autonomia Restante (KM)" type="number" inputMode="numeric" value={autonomy} onChange={e => setAutonomy(e.target.value)} placeholder="Ex: 185" />
-      <Button onClick={() => onSubmit(Number(km), Number(autonomy))} className="w-full py-4">Iniciar Agora</Button>
+      <Button 
+        onClick={async () => {
+          setIsSubmitting(true);
+          try {
+            await onSubmit(Number(km), Number(autonomy));
+          } finally {
+            setIsSubmitting(false);
+          }
+        }} 
+        disabled={isSubmitting || !km}
+        className="w-full py-4"
+      >
+        {isSubmitting ? 'Iniciando...' : 'Iniciar Agora'}
+      </Button>
     </div>
   );
 }
 
 function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
   const [value, setValue] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   return (
     <div className="space-y-6">
       <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
       <Button 
-        onClick={() => onSubmit(Number(value))} 
+        onClick={async () => {
+          setIsSubmitting(true);
+          try {
+            await onSubmit(Number(value));
+          } finally {
+            setIsSubmitting(false);
+          }
+        }} 
         className="w-full py-4 bg-green-600 hover:bg-green-500 text-white"
-        disabled={!value || Number(value) <= 0}
+        disabled={!value || Number(value) <= 0 || isSubmitting}
       >
-        Salvar Nova Corrida
+        {isSubmitting ? 'Salvando...' : 'Salvar Nova Corrida'}
       </Button>
     </div>
   );
@@ -5493,12 +5515,26 @@ function PauseShiftForm({ onSubmit, currentRevenue, initialKm }: { onSubmit: (re
   const [revenue, setRevenue] = useState(currentRevenue?.toString() || '0');
   const [km, setKm] = useState(initialKm ? initialKm.toString() : '');
   const [autonomy, setAutonomy] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   return (
     <div className="space-y-6 overflow-y-auto max-h-[70vh] pr-2">
       <CurrencyInput label="Faturamento Parcial (R$)" value={revenue} onValueChange={setRevenue} />
       <Input label="KM Atual" type="number" inputMode="numeric" value={km} onChange={e => setKm(e.target.value)} />
       <Input label="Autonomia Restante (KM)" type="number" inputMode="numeric" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
-      <Button onClick={() => onSubmit(Number(revenue), Number(km), Number(autonomy))} className="w-full py-4">Pausar Turno</Button>
+      <Button 
+        onClick={async () => {
+          setIsSubmitting(true);
+          try {
+             await onSubmit(Number(revenue), Number(km), Number(autonomy));
+          } finally {
+             setIsSubmitting(false);
+          }
+        }} 
+        disabled={isSubmitting || !km}
+        className="w-full py-4"
+      >
+        {isSubmitting ? 'Pausando...' : 'Pausar Turno'}
+      </Button>
     </div>
   );
 }
@@ -5507,6 +5543,7 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
   const [moved, setMoved] = useState<boolean | null>(null);
   const [km, setKm] = useState('');
   const [autonomy, setAutonomy] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (moved === null) {
     return (
@@ -5524,7 +5561,20 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
     return (
       <div className="space-y-6">
         <p className="text-gray-600 dark:text-gray-400">Apenas retomando o cronômetro...</p>
-        <Button onClick={() => onSubmit()} className="w-full py-4">Confirmar Retomada</Button>
+        <Button 
+          onClick={async () => {
+             setIsSubmitting(true);
+             try {
+                await onSubmit();
+             } finally {
+                setIsSubmitting(false);
+             }
+          }} 
+          disabled={isSubmitting}
+          className="w-full py-4"
+        >
+          {isSubmitting ? 'Retomando...' : 'Confirmar Retomada'}
+        </Button>
       </div>
     );
   }
@@ -5533,7 +5583,20 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
     <div className="space-y-6">
       <Input label="Nova KM" type="number" value={km} onChange={e => setKm(e.target.value)} />
       <Input label="Nova Autonomia (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
-      <Button onClick={() => onSubmit(Number(km), Number(autonomy))} className="w-full py-4">Retomar Turno</Button>
+      <Button 
+        onClick={async () => {
+           setIsSubmitting(true);
+           try {
+              await onSubmit(Number(km), Number(autonomy));
+           } finally {
+              setIsSubmitting(false);
+           }
+        }} 
+        disabled={!km || isSubmitting} 
+        className="w-full py-4"
+      >
+        {isSubmitting ? 'Retomando...' : 'Retomar Turno'}
+      </Button>
     </div>
   );
 }
@@ -5601,6 +5664,7 @@ function FinishShiftForm({ onSubmit, currentRevenue, initialKm, todayTripsSoFar,
   const [avgCons, setAvgCons] = useState('');
   const [revenue, setRevenue] = useState(currentRevenue?.toString() || '0');
   const [totalDayTrips, setTotalDayTrips] = useState(((todayTripsSoFar || 0) + (currentShiftTrips || 0)).toString());
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
   const calculatedShiftTrips = Math.max(0, Number(totalDayTrips) - todayTripsSoFar);
 
@@ -5618,7 +5682,21 @@ function FinishShiftForm({ onSubmit, currentRevenue, initialKm, todayTripsSoFar,
         <p className="text-xs text-gray-500 font-medium">Corridas deste turno: {calculatedShiftTrips}</p>
       </div>
 
-      <Button onClick={() => onSubmit(Number(km), Number(autonomy), Number(avgCons), Number(revenue), calculatedShiftTrips)} variant="danger" className="w-full py-4">Finalizar Turno</Button>
+      <Button 
+        onClick={async () => {
+           setIsSubmitting(true);
+           try {
+              await onSubmit(Number(km), Number(autonomy), Number(avgCons), Number(revenue), calculatedShiftTrips);
+           } finally {
+              setIsSubmitting(false);
+           }
+        }} 
+        variant="danger" 
+        className="w-full py-4 text-white"
+        disabled={!km || isSubmitting}
+      >
+        {isSubmitting ? 'Finalizando...' : 'Finalizar Turno'}
+      </Button>
     </div>
   );
 }
