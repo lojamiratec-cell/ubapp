@@ -480,6 +480,7 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [showImportPreviewModal, setShowImportPreviewModal] = useState(false);
   const [showAiAnalysisModal, setShowAiAnalysisModal] = useState(false);
+  const [showComparisonModal, setShowComparisonModal] = useState(false);
   const [showAiResultModal, setShowAiResultModal] = useState(false);
   const [analysisFilter, setAnalysisFilter] = useState<'day' | 'week' | 'month'>('week');
   const [selectedAnalysisDate, setSelectedAnalysisDate] = useState(format(new Date(), 'yyyy-MM-dd'));
@@ -566,6 +567,82 @@ export default function App() {
     
     return { totalRevenue, totalTime, totalKm, rph, rpkm };
   }, [groupedShifts]);
+
+  const historyComparisonData = useMemo(() => {
+    if (!shifts || shifts.length === 0) return null;
+
+    const aggregateShifts = (filtered: Shift[]) => {
+      const revenue = filtered.reduce((acc, s) => acc + s.totalRevenue, 0);
+      const time = filtered.reduce((acc, s) => acc + (s.activeTimeSeconds || 0), 0);
+      const km = filtered.reduce((acc, s) => acc + (s.totalWorkKm || ((s.endKm || 0) - s.startKm)), 0);
+      return { 
+        revenue, 
+        time, 
+        km, 
+        rph: time > 0 ? revenue / (time / 3600) : 0, 
+        rpkm: km > 0 ? revenue / km : 0 
+      };
+    };
+
+    let current, previous, average;
+    let labelPrev = '', labelAvg = '';
+
+    if (historyFilter === 'week') {
+      const currentShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), historyReferenceDate, { weekStartsOn: 1 }));
+      current = aggregateShifts(currentShifts);
+
+      const prevWeekDate = subWeeks(historyReferenceDate, 1);
+      const prevShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), prevWeekDate, { weekStartsOn: 1 }));
+      previous = aggregateShifts(prevShifts);
+      labelPrev = 'Sema. Passada';
+
+      let past4Rev = 0, past4Time = 0, past4Km = 0;
+      for(let i=1; i<=4; i++) {
+        const wDate = subWeeks(historyReferenceDate, i);
+        const wShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), wDate, { weekStartsOn: 1 }));
+        const agg = aggregateShifts(wShifts);
+        past4Rev += agg.revenue;
+        past4Time += agg.time;
+        past4Km += agg.km;
+      }
+      average = {
+        revenue: past4Rev / 4,
+        time: past4Time / 4,
+        km: past4Km / 4,
+        rph: past4Time > 0 ? past4Rev / (past4Time / 3600) : 0,
+        rpkm: past4Km > 0 ? past4Rev / past4Km : 0
+      };
+      labelAvg = 'Média das 4S Anteriores';
+    } else {
+      const currentShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), historyReferenceDate));
+      current = aggregateShifts(currentShifts);
+
+      const prevMonthDate = subMonths(historyReferenceDate, 1);
+      const prevShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), prevMonthDate));
+      previous = aggregateShifts(prevShifts);
+      labelPrev = 'Mês Passado';
+
+      let past3Rev = 0, past3Time = 0, past3Km = 0;
+      for(let i=1; i<=3; i++) {
+        const mDate = subMonths(historyReferenceDate, i);
+        const mShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), mDate));
+        const agg = aggregateShifts(mShifts);
+        past3Rev += agg.revenue;
+        past3Time += agg.time;
+        past3Km += agg.km;
+      }
+      average = {
+        revenue: past3Rev / 3,
+        time: past3Time / 3,
+        km: past3Km / 3,
+        rph: past3Time > 0 ? past3Rev / (past3Time / 3600) : 0,
+        rpkm: past3Km > 0 ? past3Rev / past3Km : 0
+      };
+      labelAvg = 'Média dos 3M Anteriores';
+    }
+
+    return { current, previous, average, labelPrev, labelAvg };
+  }, [shifts, historyFilter, historyReferenceDate]);
 
   const toggleDay = (dateKey: string) => {
     setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
@@ -1569,11 +1646,11 @@ REGRAS CRÍTICAS:
     }
   };
 
-  const addPastShift = async (start: Date, end: Date, startKm: number, endKm: number, revenue: number, trips: number, avgCons?: number) => {
+  const addPastShift = async (start: Date, end: Date, startKm: number, endKm: number, revenue: number, trips: number, avgCons?: number, activeSecs?: number) => {
     if (!user) return;
     try {
-      const activeTime = differenceInSeconds(end, start);
-      const workKm = endKm - startKm;
+      const activeTime = activeSecs !== undefined ? activeSecs : Math.max(0, differenceInSeconds(end, start));
+      const workKm = Math.max(0, endKm - startKm);
       
       const previousShift = shifts.find(s => s.endTime && (s.endTime?.toDate() || new Date()) < start);
       const prevKm = previousShift ? (previousShift.endKm || previousShift.lastKm || previousShift.startKm) : 0;
@@ -1730,7 +1807,9 @@ REGRAS CRÍTICAS:
 
       const updates: any = { ...data };
       
-      if (data.startTime && data.endTime) {
+      if (data.activeTimeSeconds !== undefined) {
+        updates.activeTimeSeconds = data.activeTimeSeconds;
+      } else if (data.startTime && data.endTime) {
         const oldStartTime = existing.startTime?.toDate() || new Date();
         const oldEndTime = existing.endTime?.toDate() || new Date();
         const newStartTime = data.startTime instanceof Timestamp ? data.startTime.toDate() : new Date();
@@ -3415,15 +3494,6 @@ Exemplo de retorno:
               <div className="flex flex-col gap-6 mb-6">
                 <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
                   <h2 className="text-2xl font-black dark:text-white uppercase tracking-wider">Histórico</h2>
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => setShowImportModal(true)} icon={Upload} variant="outline" className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-white dark:bg-[#111827]">
-                      Importar
-                    </Button>
-                    <Button onClick={exportShiftsToCSV} disabled={shifts.length === 0 || isExporting} icon={Download} variant="outline" className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-white dark:bg-[#111827]">
-                      {isExporting ? 'Exportando...' : 'Exportar CSV'}
-                    </Button>
-                    <Button onClick={() => setShowPastShiftModal(true)} icon={Calendar} className="py-2.5 px-4 text-xs font-bold uppercase rounded-xl bg-green-600 hover:bg-green-500 text-white shadow-sm border-none">Registrar</Button>
-                  </div>
                 </div>
                 
                 <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
@@ -3450,36 +3520,38 @@ Exemplo de retorno:
                         <ChevronRight size={18} />
                       </button>
                     </div>
-                  
-                  
-                  <div className="flex items-center space-x-2 w-full sm:w-auto">
-                     <button onClick={() => setHistoryPendingOnly(!historyPendingOnly)} className={cn("flex-1 flex gap-2 items-center justify-center py-3.5 px-6 text-xs font-black uppercase tracking-widest rounded-[20px] transition-all duration-300 border", historyPendingOnly ? "bg-red-50 text-red-600 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]" : "bg-white dark:bg-gray-800/50 text-gray-500 dark:text-gray-400 border-gray-200/50 dark:border-gray-700/50 hover:text-gray-800 dark:hover:text-gray-200 shadow-sm")}>
-                        <AlertCircle size={16} className={cn(historyPendingOnly ? "text-red-500 dark:text-red-400" : "")} />
-                        Pendentes
-                     </button>
-                  </div>
                 </div>
 
                 {shifts.length > 0 && (
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 bg-[#0B0B0C] dark:bg-[#111827]/80 rounded-[24px] border border-gray-800/80 shadow-2xl relative overflow-hidden">
+                  <div className="bg-[#0B0B0C] dark:bg-[#111827]/80 rounded-[24px] border border-gray-800/80 shadow-2xl relative overflow-hidden mb-4">
                     <div className="absolute inset-0 bg-gradient-to-br from-[#22C55E]/5 to-transparent pointer-events-none" />
-                    <div className="relative z-10">
-                      <p className="text-[9px] uppercase font-black text-[#22C55E] tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Total Faturado</p>
-                      <p className="text-2xl lg:text-3xl font-black text-white tracking-tighter">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 relative z-10">
+                      <div className="relative z-10">
+                        <p className="text-[9px] uppercase font-black text-[#22C55E] tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Total Faturado</p>
+                        <p className="text-2xl lg:text-3xl font-black text-white tracking-tighter">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
+                      </div>
+                      <div className="relative z-10">
+                        <p className="text-[9px] uppercase font-black text-gray-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Horas Direção</p>
+                        <p className="text-2xl font-bold text-gray-200 tracking-tighter">
+                          {Math.floor(historySummary.totalTime / 3600)}<span className="text-sm font-medium text-gray-500 mx-0.5">h</span>{Math.floor((historySummary.totalTime % 3600) / 60)}<span className="text-sm font-medium text-gray-500 ml-0.5">m</span>
+                        </p>
+                      </div>
+                      <div className="relative z-10">
+                        <p className="text-[9px] uppercase font-black text-emerald-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$/Hora Médio</p>
+                        <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-emerald-400">R$ {historySummary.rph.toFixed(2)}</span> /h</p>
+                      </div>
+                      <div className="relative z-10">
+                        <p className="text-[9px] uppercase font-black text-indigo-400 tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$/KM Médio</p>
+                        <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-indigo-400">R$ {historySummary.rpkm.toFixed(2)}</span> /km</p>
+                      </div>
                     </div>
-                    <div className="relative z-10">
-                      <p className="text-[9px] uppercase font-black text-gray-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Horas Direção</p>
-                      <p className="text-2xl font-bold text-gray-200 tracking-tighter">
-                        {Math.floor(historySummary.totalTime / 3600)}<span className="text-sm font-medium text-gray-500 mx-0.5">h</span>{Math.floor((historySummary.totalTime % 3600) / 60)}<span className="text-sm font-medium text-gray-500 ml-0.5">m</span>
-                      </p>
-                    </div>
-                    <div className="relative z-10">
-                      <p className="text-[9px] uppercase font-black text-emerald-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$/Hora Médio</p>
-                      <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-emerald-400">R$ {historySummary.rph.toFixed(2)}</span> /h</p>
-                    </div>
-                    <div className="relative z-10">
-                      <p className="text-[9px] uppercase font-black text-indigo-400 tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$/KM Médio</p>
-                      <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-indigo-400">R$ {historySummary.rpkm.toFixed(2)}</span> /km</p>
+                    <div className="px-5 pb-5 pt-1 relative z-10">
+                       <button 
+                         onClick={() => setShowComparisonModal(true)}
+                         className="w-full py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 text-white text-xs font-bold uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                       >
+                         <BarChart3 size={16} /> Ver Comparativo Completo
+                       </button>
                     </div>
                   </div>
                 )}
@@ -3852,31 +3924,67 @@ Exemplo de retorno:
                 })
               )}
 
-              {/* AI Analysis Floating Button at the end of history */}
+              {/* Ações do Histórico ao fim da página */}
               <div className="pt-6 pb-20">
-                <Button 
-                  onClick={() => setShowAiAnalysisModal(true)}
-                  className="w-full py-6 rounded-3xl bg-gradient-to-r from-green-600 to-indigo-600 hover:from-green-700 hover:to-indigo-700 text-white shadow-xl shadow-green-200 dark:shadow-none transition-all group overflow-hidden relative"
-                >
-                  <motion.div
-                    className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                    initial={false}
-                    animate={{ x: ['-100%', '100%'] }}
-                    transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                  />
-                  <div className="flex items-center justify-center gap-3 relative z-10">
-                    <div className="bg-white/20 p-2 rounded-xl">
-                      <Sparkles size={20} className="text-white" />
-                    </div>
-                    <div className="text-left">
-                      <p className="text-xs font-black uppercase tracking-widest opacity-80">Inteligência Artificial</p>
-                      <p className="text-lg font-bold">Análise de IA</p>
-                    </div>
+                <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm p-6 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Button 
+                      onClick={() => setShowAiAnalysisModal(true)}
+                      className="w-full py-6 rounded-2xl bg-gradient-to-r from-green-600 to-indigo-600 hover:from-green-700 hover:to-indigo-700 text-white shadow-xl shadow-green-200 dark:shadow-none transition-all group overflow-hidden relative border-none"
+                    >
+                      <motion.div
+                        className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                        initial={false}
+                        animate={{ x: ['-100%', '100%'] }}
+                        transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+                      />
+                      <div className="flex items-center justify-center gap-3 relative z-10">
+                        <div className="bg-white/20 p-2 rounded-xl">
+                          <Sparkles size={20} className="text-white" />
+                        </div>
+                        <div className="text-left">
+                          <p className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none mb-1">Inteligência Artificial</p>
+                          <p className="text-base font-bold">Análise de IA</p>
+                        </div>
+                      </div>
+                    </Button>
+
+                    <Button 
+                      onClick={() => setShowPastShiftModal(true)} 
+                      icon={Calendar} 
+                      className="w-full py-6 rounded-2xl bg-green-600 hover:bg-green-500 text-white shadow-sm border-none flex items-center justify-center gap-3"
+                    >
+                      <div className="text-left">
+                        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none mb-1">Lançamento</p>
+                        <p className="text-base font-bold">Registrar Turno</p>
+                      </div>
+                    </Button>
                   </div>
-                </Button>
-                <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 mt-4 font-medium uppercase tracking-tighter">
-                  Analise seu desempenho diário, semanal ou mensal com IA
-                </p>
+
+                  <div className="grid grid-cols-2 gap-4 pt-2">
+                    <Button 
+                      onClick={() => setShowImportModal(true)} 
+                      icon={Upload} 
+                      variant="outline" 
+                      className="py-4 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-gray-50 dark:bg-black/20"
+                    >
+                      Importar
+                    </Button>
+                    <Button 
+                      onClick={exportShiftsToCSV} 
+                      disabled={shifts.length === 0 || isExporting} 
+                      icon={Download} 
+                      variant="outline" 
+                      className="py-4 px-4 text-xs font-bold uppercase rounded-xl border-gray-200 dark:border-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors bg-gray-50 dark:bg-black/20"
+                    >
+                      {isExporting ? 'Exportando...' : 'Exportar CSV'}
+                    </Button>
+                  </div>
+
+                  <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 font-medium uppercase tracking-tighter">
+                    Gerencie seu histórico e analise seu desempenho com IA
+                  </p>
+                </div>
               </div>
             </motion.div>
           )}
@@ -4252,103 +4360,112 @@ Exemplo de retorno:
               ) : (
                 <>
                   {/* Resumo do Período */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">Faturamento</p>
-                      <p className="text-lg font-bold text-gray-900 dark:text-white">R$ {metrics.totalRevenue.toFixed(2)}</p>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">KM Trabalho</p>
-                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalKmWork.toFixed(1)} km</p>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">KM Pessoal</p>
-                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalKmPersonal.toFixed(1)} km</p>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 transition-colors shadow-sm">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest">Tempo Total</p>
-                      <p className="text-lg font-bold text-gray-900 dark:text-white">{metrics.totalHours.toFixed(1)}h</p>
-                    </div>
-                    <div className="bg-white dark:bg-gray-900 p-4 rounded-xl border border-gray-100 dark:border-gray-800 sm:col-span-2 transition-colors shadow-sm">
-                      <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase mb-1 tracking-widest text-center">Total de Viagens</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white text-center font-mono tracking-tighter">{metrics.totalTrips}</p>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-purple-500 dark:from-blue-600 dark:via-indigo-600 dark:to-purple-600" />
+                    
+                    <div className="p-6 pb-4">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Resumo do Período</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><DollarSign size={12} className="text-gray-400" /> Faturamento</p>
+                          <p className="text-2xl font-black text-green-600 dark:text-green-500">R$ {metrics.totalRevenue.toFixed(2)}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><MapPin size={12} className="text-gray-400" /> KM Trabalho</p>
+                          <p className="text-2xl font-black text-gray-900 dark:text-white">{metrics.totalKmWork.toFixed(1)}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><MapPin size={12} className="text-gray-400" /> KM Pessoal</p>
+                          <p className="text-2xl font-black text-gray-900 dark:text-white">{metrics.totalKmPersonal.toFixed(1)}</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Clock size={12} className="text-gray-400" /> Tempo Total</p>
+                          <p className="text-2xl font-black text-gray-900 dark:text-white">{metrics.totalHours.toFixed(1)}h</p>
+                        </div>
+                        <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5 col-span-2">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center justify-center gap-1.5"><Activity size={12} className="text-gray-400" /> Total de Viagens</p>
+                          <p className="text-3xl font-black text-gray-900 dark:text-white text-center font-mono tracking-tighter">{metrics.totalTrips}</p>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
                   {/* Métricas Principais */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Métricas Principais</h3>
-                    
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
-                      <div className="flex items-center gap-3">
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Eficiência e Qualidade</h3>
+                    <div className="space-y-4">
+                      
+                      <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
+                            metrics.revenuePerHour >= 35 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerHour >= 25 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          )}>
+                            <Activity size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / Hora</p>
+                            <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {metrics.revenuePerHour.toFixed(2)}/h</p>
+                          </div>
+                        </div>
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.revenuePerHour >= 35 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerHour >= 25 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
+                          metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                         )}>
-                          <Clock size={20} className={metrics.revenuePerHour >= 35 ? "text-green-600 dark:text-green-400" : metrics.revenuePerHour >= 25 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / Hora</p>
-                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.revenuePerHour.toFixed(2)}/h</p>
+                          {metrics.revenuePerHour >= 35 ? "Excelente" : metrics.revenuePerHour >= 25 ? "Bom" : "Baixo"}
                         </div>
                       </div>
-                      <div className={cn(
-                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.revenuePerHour >= 35 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerHour >= 25 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                      )}>
-                        {metrics.revenuePerHour >= 35 ? "Excelente" : metrics.revenuePerHour >= 25 ? "Bom" : "Baixo"}
-                      </div>
-                    </Card>
 
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
-                      <div className="flex items-center gap-3">
+                      <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
+                            metrics.revenuePerKm >= 2.5 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerKm >= 1.8 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          )}>
+                            <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / KM</p>
+                            <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {metrics.revenuePerKm.toFixed(2)}/km</p>
+                          </div>
+                        </div>
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.revenuePerKm >= 2.5 ? "bg-green-50 dark:bg-green-900/20" : metrics.revenuePerKm >= 1.8 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
+                          metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                         )}>
-                          <MapPin size={20} className={metrics.revenuePerKm >= 2.5 ? "text-green-600 dark:text-green-400" : metrics.revenuePerKm >= 1.8 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">R$ / KM</p>
-                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.revenuePerKm.toFixed(2)}/km</p>
+                          {metrics.revenuePerKm >= 2.5 ? "Excelente" : metrics.revenuePerKm >= 1.8 ? "Bom" : "Baixo"}
                         </div>
                       </div>
-                      <div className={cn(
-                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.revenuePerKm >= 2.5 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.revenuePerKm >= 1.8 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                      )}>
-                        {metrics.revenuePerKm >= 2.5 ? "Excelente" : metrics.revenuePerKm >= 1.8 ? "Bom" : "Baixo"}
-                      </div>
-                    </Card>
 
-                    <Card className="flex flex-col sm:flex-row sm:items-center justify-between py-4 px-4 gap-3 sm:gap-0">
-                      <div className="flex items-center gap-3">
+                      <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
+                        <div className="flex items-center gap-3">
+                          <div className={cn(
+                            "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
+                            metrics.ticketMedio >= 15 ? "bg-green-50 dark:bg-green-900/20" : metrics.ticketMedio >= 10 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          )}>
+                            <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Ticket Médio</p>
+                            <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {metrics.ticketMedio.toFixed(2)}</p>
+                          </div>
+                        </div>
                         <div className={cn(
-                          "w-10 h-10 rounded-xl flex items-center justify-center transition-colors shrink-0",
-                          metrics.ticketMedio >= 15 ? "bg-green-50 dark:bg-green-900/20" : metrics.ticketMedio >= 10 ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"
+                          "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
+                          metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
                         )}>
-                          <DollarSign size={20} className={metrics.ticketMedio >= 15 ? "text-green-600 dark:text-green-400" : metrics.ticketMedio >= 10 ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"} />
-                        </div>
-                        <div>
-                          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">Ticket Médio</p>
-                          <p className="font-bold text-base dark:text-white tracking-tight">R$ {metrics.ticketMedio.toFixed(2)}</p>
+                          {metrics.ticketMedio >= 15 ? "Excelente" : metrics.ticketMedio >= 10 ? "Bom" : "Baixo"}
                         </div>
                       </div>
-                      <div className={cn(
-                        "px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-colors self-start sm:self-auto shadow-sm",
-                        metrics.ticketMedio >= 15 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : metrics.ticketMedio >= 10 ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300" : "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
-                      )}>
-                        {metrics.ticketMedio >= 15 ? "Excelente" : metrics.ticketMedio >= 10 ? "Bom" : "Baixo"}
-                      </div>
-                    </Card>
+                    </div>
                   </div>
 
                   {/* Secao Cofre Inteligente (Bento Grid) */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Inteligência Estratégica</h3>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Inteligência Estratégica</h3>
                     <div className="grid grid-cols-2 gap-3">
-                       <Card className="p-4 bg-purple-50 dark:bg-purple-900/10 border-purple-100 dark:border-purple-900/20 col-span-1 shadow-sm">
-                          <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-1 tracking-widest">Melhor Horário</p>
+                       <div className="p-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 rounded-2xl col-span-1 flex flex-col justify-center">
+                          <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Clock size={12} /> Melhor Horário</p>
                           <p className="text-2xl font-black text-purple-700 dark:text-purple-300">
                             {metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour.toString().padStart(2, '0')}:00` : '--:--'}
                           </p>
@@ -4357,34 +4474,32 @@ Exemplo de retorno:
                                Picos de R$ {metrics.bestHourInfo.rph.toFixed(2)}/h
                             </p>
                           )}
-                       </Card>
-                       <Card className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border-indigo-100 dark:border-indigo-900/20 col-span-1 shadow-sm">
-                          <div className="flex justify-between items-start">
-                             <div>
-                                <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase mb-1 tracking-widest">Melhor Dia</p>
-                                <p className="text-xl font-black text-indigo-700 dark:text-indigo-300">
-                                  {metrics.bestDayInfo.day !== -1 ? ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][metrics.bestDayInfo.day] : '---'}
-                                </p>
-                             </div>
-                          </div>
+                       </div>
+                       <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/20 rounded-2xl col-span-1 flex flex-col justify-center">
+                          <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Calendar size={12} /> Melhor Dia</p>
+                          <p className="text-xl font-black text-indigo-700 dark:text-indigo-300">
+                            {metrics.bestDayInfo.day !== -1 ? ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][metrics.bestDayInfo.day] : '---'}
+                          </p>
                           {metrics.bestDayInfo.rph > 0 && (
                             <p className="text-[10px] text-indigo-600/70 dark:text-indigo-400/70 mt-1 line-clamp-2">
                                Média de R$ {metrics.bestDayInfo.rph.toFixed(2)}/h
                             </p>
                           )}
-                       </Card>
+                       </div>
                     </div>
                   </div>
 
                   {/* Hall of Fame - Top Trips */}
                   {metrics.top3BestTrips.length > 0 && (
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Hall da Fama (Top 3 Viagens)</h3>
+                    <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2">⭐ Hall da Fama (Top 3 Viagens)</h3>
                       <div className="space-y-2">
                         {metrics.top3BestTrips.map((t, idx) => (
-                          <div key={t.id} className="flex justify-between items-center px-4 py-3 bg-green-50 dark:bg-green-900/10 rounded-xl border border-green-100 dark:border-green-900/30">
-                             <div className="flex items-center gap-3">
-                                <span className="text-xl font-black text-green-200 dark:text-green-900">#{idx + 1}</span>
+                          <div key={t.id} className="flex justify-between items-center px-4 py-4 bg-green-50 dark:bg-green-900/10 rounded-2xl border border-green-100 dark:border-green-900/30">
+                             <div className="flex items-center gap-4">
+                                <div className="w-8 h-8 rounded-full bg-green-200 dark:bg-green-900/50 flex items-center justify-center">
+                                  <span className="text-xs font-black text-green-700 dark:text-green-400">#{idx + 1}</span>
+                                </div>
                                 <div>
                                   <p className="font-bold text-green-700 dark:text-green-400">R$ {t.value.toFixed(2)}</p>
                                   <p className="text-xs text-green-600/70 dark:text-green-400/70">
@@ -4393,7 +4508,7 @@ Exemplo de retorno:
                                 </div>
                              </div>
                              <div className="text-right">
-                               <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
+                               <p className="text-sm font-black text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-lg">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
                              </div>
                           </div>
                         ))}
@@ -4403,13 +4518,15 @@ Exemplo de retorno:
 
                   {/* Hall of Shame - Worst Trips */}
                   {metrics.top3WorstTrips.length > 0 && (
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Fuga Imediata (Piores Viagens)</h3>
+                    <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2">⚠️ Fuga Imediata (Piores Viagens)</h3>
                       <div className="space-y-2">
                         {metrics.top3WorstTrips.map((t, idx) => (
-                          <div key={t.id} className="flex justify-between items-center px-4 py-3 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-100 dark:border-red-900/30 opacity-80">
-                             <div className="flex items-center gap-3">
-                                <span className="text-xl font-black text-red-200 dark:text-red-900">!</span>
+                          <div key={t.id} className="flex justify-between items-center px-4 py-4 bg-red-50 dark:bg-red-900/10 rounded-2xl border border-red-100 dark:border-red-900/30 opacity-80 hover:opacity-100 transition-opacity">
+                             <div className="flex items-center gap-4">
+                                <div className="w-8 h-8 rounded-full bg-red-200 dark:bg-red-900/50 flex items-center justify-center">
+                                  <span className="text-xs font-black text-red-700 dark:text-red-400">!</span>
+                                </div>
                                 <div>
                                   <p className="font-bold text-red-700 dark:text-red-400">R$ {t.value.toFixed(2)}</p>
                                   <p className="text-xs text-red-600/70 dark:text-red-400/70">
@@ -4418,7 +4535,7 @@ Exemplo de retorno:
                                 </div>
                              </div>
                              <div className="text-right">
-                               <p className="text-sm font-black text-red-600 dark:text-red-400">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
+                               <p className="text-sm font-black text-red-600 dark:text-red-400 bg-red-100 dark:bg-red-900/30 px-2 py-1 rounded-lg">R$ {(t.value / (t.durationSeconds / 3600)).toFixed(0)}/h</p>
                              </div>
                           </div>
                         ))}
@@ -4427,8 +4544,8 @@ Exemplo de retorno:
                   )}
 
                   {/* Secao Dinheiro Extra */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Análise de Receita Extra</h3>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Análise de Receita Extra</h3>
                     <div className="grid grid-cols-2 gap-3">
                        <Card className="p-4 bg-teal-50 dark:bg-teal-900/10 border-teal-100 dark:border-teal-900/20 col-span-1 shadow-sm">
                           <p className="text-[10px] font-bold text-teal-600 dark:text-teal-400 uppercase mb-1 tracking-widest">Dinâmicos Salvos</p>
@@ -4453,12 +4570,12 @@ Exemplo de retorno:
                   </div>
 
                   {/* Custos e Lucro (Bento Grid) */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Custos & Lucro (Período Atual)</h3>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Custos & Lucro (Período Atual)</h3>
                     
-                    <Card className="bg-gray-900 border-gray-800 shadow-xl overflow-hidden p-0">
+                    <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-sm">
                       {/* Top Bar - Resumo Liquido */}
-                      <div className="p-5 bg-gradient-to-r from-green-600/20 to-green-600/20 border-b border-gray-800">
+                      <div className="p-5 bg-gradient-to-r from-green-600/20 to-green-600/10 border-b border-gray-800">
                         <p className="text-[10px] font-bold text-gray-400 uppercase mb-1 tracking-widest">Lucro Líquido Final Estimado</p>
                         <div className="flex justify-between items-baseline">
                            <p className="text-3xl font-black text-white tracking-tighter">R$ {metrics.estimatedProfit.toFixed(2)}</p>
@@ -4484,18 +4601,18 @@ Exemplo de retorno:
                       
                       <div className="p-4">
                          <div className="flex justify-between items-center text-xs">
-                             <span className="text-gray-500 font-bold uppercase">Prejuízo Pessoal (Uso Fora do App)</span>
+                             <span className="text-gray-500 font-bold uppercase tracking-wide text-[10px]">Prejuízo Pessoal (Uso Fora do App)</span>
                              <span className="font-bold text-red-400 line-through">R$ {metrics.personalFuelCost.toFixed(2)}</span>
                          </div>
                       </div>
-                    </Card>
+                    </div>
                   </div>
 
                   {/* Custos Reais */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Custos Reais (Últimos 30 Dias)</h3>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 border-transparent">Custos Reais (Últimos 30 Dias)</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <Card className="p-4 bg-red-50 dark:bg-red-900/10 border-red-100 dark:border-red-900/20">
+                      <div className="p-4 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-2xl flex flex-col justify-center">
                         <div className="flex items-center gap-3 mb-2">
                           <div className="w-8 h-8 rounded-lg bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
                             <FuelIcon size={16} className="text-red-600 dark:text-red-400" />
@@ -4504,8 +4621,8 @@ Exemplo de retorno:
                         </div>
                         <p className="text-2xl font-bold text-red-700 dark:text-red-300">R$ {costsMetrics.totalFuelValue30Days.toFixed(2)}</p>
                         <p className="text-xs text-red-600/70 dark:text-red-400/70 mt-1">{costsMetrics.totalLiters30Days.toFixed(1)} Litros abastecidos</p>
-                      </Card>
-                      <Card className="p-4 bg-orange-50 dark:bg-orange-900/10 border-orange-100 dark:border-orange-900/20">
+                      </div>
+                      <div className="p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/20 rounded-2xl flex flex-col justify-center">
                         <div className="flex items-center gap-3 mb-2">
                           <div className="w-8 h-8 rounded-lg bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
                             <SettingsIcon size={16} className="text-orange-600 dark:text-orange-400" />
@@ -4513,132 +4630,144 @@ Exemplo de retorno:
                           <p className="text-xs font-bold text-orange-600 dark:text-orange-400 uppercase">Outras Despesas</p>
                         </div>
                         <p className="text-2xl font-bold text-orange-700 dark:text-orange-300">R$ {costsMetrics.totalExpenses30Days.toFixed(2)}</p>
-                      </Card>
+                      </div>
                     </div>
                   </div>
 
                   {/* Resumo Mensal Consolidado */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Comparativo Mensal</h3>
-                    <Card className="p-5">
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Comparativo Mensal</h3>
+                    <div className="p-5 border border-gray-100 dark:border-white/5 rounded-2xl bg-gray-50 dark:bg-black/20">
                       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4">
                         <div>
-                          <p className="text-xs font-bold text-gray-400 uppercase">Faturamento Mensal</p>
-                          <p className="text-2xl font-bold dark:text-white">R$ {monthlySummary.currentRevenue.toFixed(2)}</p>
+                          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Faturamento Mensal</p>
+                          <p className="text-2xl font-black dark:text-white mt-1">R$ {monthlySummary.currentRevenue.toFixed(2)}</p>
                         </div>
                         <div className={cn(
-                          "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-bold self-start sm:self-auto",
-                          monthlySummary.growth >= 0 ? "bg-green-50 text-green-600 dark:bg-green-900/20 dark:text-green-400" : "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400"
+                          "flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold self-start sm:self-auto",
+                          monthlySummary.growth >= 0 ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400"
                         )}>
                           {monthlySummary.growth >= 0 ? <TrendingUp size={14} /> : <TrendingUp size={14} className="rotate-180" />}
-                          {Math.abs(monthlySummary.growth).toFixed(1)}%
+                          {Math.abs(monthlySummary.growth).toFixed(1)}% {monthlySummary.growth >= 0 ? 'Maior' : 'Menor'}
                         </div>
                       </div>
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs text-gray-500 dark:text-gray-400">
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-green-600 shrink-0" />
-                          <span>Mês Atual: {monthlySummary.currentCount} turnos</span>
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 text-xs text-gray-500 dark:text-gray-400 pt-3 border-t border-gray-200 dark:border-gray-800">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.5)]" />
+                          <span className="font-medium">Atual: {monthlySummary.currentCount} turnos</span>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <div className="w-2 h-2 rounded-full bg-gray-300 dark:bg-gray-700 shrink-0" />
-                          <span>Mês Anterior: {monthlySummary.lastCount} turnos</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full bg-gray-300 dark:bg-gray-700 shrink-0" />
+                          <span className="font-medium">Anterior: {monthlySummary.lastCount} turnos</span>
                         </div>
                       </div>
-                    </Card>
+                    </div>
                   </div>
 
                   {/* Projeção de Metas */}
                   {goalsProjection && (
-                    <div className="space-y-3">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Projeção de Meta Semanal</h3>
-                      <Card className="bg-green-600 text-white p-6 relative overflow-hidden">
-                        <div className="absolute -right-4 -bottom-4 opacity-10">
-                          <Target size={120} />
+                    <div className="mt-4">
+                      <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-3xl p-6 relative overflow-hidden shadow-[0_10px_40px_-10px_rgba(34,197,94,0.4)]">
+                        <div className="absolute -right-10 -bottom-10 opacity-10 blur-sm pointer-events-none">
+                          <Target size={160} />
                         </div>
-                        <div className="relative z-10 space-y-4">
+                        <h3 className="text-[11px] font-black text-green-200/80 uppercase tracking-widest mb-6 flex items-center gap-2 relative z-10">🎯 Projeção de Meta Semanal</h3>
+                        <div className="relative z-10 space-y-5">
                           <div className="flex justify-between items-end">
                             <div>
-                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-tight mb-1">Acumulado na Semana</p>
-                              <p className="text-2xl font-black">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
+                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-widest mb-1">Acumulado na Semana</p>
+                              <p className="text-3xl font-black text-white">R$ {goalsProjection.weeklyRevenue.toFixed(2)}</p>
                             </div>
                             <div className="text-right">
-                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-tight mb-1">Meta Semanal</p>
-                              <p className="text-lg font-bold">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
+                              <p className="text-green-100 text-[10px] font-bold uppercase tracking-widest mb-1">Meta Semanal</p>
+                              <p className="text-xl font-bold text-white/90">R$ {goalsProjection.weeklyGoal.toFixed(0)}</p>
                               {planningMetrics && (
-                                <span className="text-[8px] bg-white/20 px-1.5 py-0.5 rounded-md uppercase font-bold tracking-tighter mt-1 block">Sincronizada</span>
+                                <span className="text-[8px] bg-black/20 text-green-100 px-2 py-0.5 rounded-md uppercase font-bold tracking-widest mt-1.5 inline-block">Sincronizada</span>
                               )}
                             </div>
                           </div>
                           
-                          <div className="w-full bg-green-700/50 h-3 rounded-full overflow-hidden border border-green-500/30">
+                          <div className="w-full bg-black/20 h-4 rounded-full overflow-hidden border border-white/10 backdrop-blur-sm relative">
                             <motion.div 
                               initial={{ width: 0 }}
                               animate={{ width: `${Math.min(100, (goalsProjection.weeklyRevenue / goalsProjection.weeklyGoal) * 100)}%` }}
-                              className="bg-white h-full shadow-[0_0_15px_rgba(255,255,255,0.5)]"
-                            />
+                              className="bg-white h-full relative"
+                            >
+                               <div className="absolute inset-0 bg-black/10" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
+                            </motion.div>
                           </div>
 
-                          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-4 border border-white/10">
+                          <div className="bg-black/20 backdrop-blur-md rounded-2xl p-4 border border-white/10 flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                              <div className="bg-white/20 p-2 rounded-xl">
-                                <Sparkles size={18} className="text-white" />
+                              <div className="bg-white/10 p-2.5 rounded-xl text-yellow-300">
+                                <Sparkles size={20} />
                               </div>
                               <div>
-                                <p className="text-[10px] text-green-100 font-bold uppercase">Estimativa para bater a meta</p>
-                                <p className="text-sm font-bold">
-                                  Precisa de <span className="text-yellow-300">R$ {goalsProjection.requiredDaily.toFixed(2)} / dia</span> nos próximos {goalsProjection.daysRemaining} dias.
+                                <p className="text-[10px] text-green-200 font-bold uppercase tracking-widest">Para bater a meta</p>
+                                <p className="text-sm font-bold text-white mt-0.5">
+                                  Precisa de <span className="text-yellow-300 bg-black/30 px-1.5 rounded">R$ {goalsProjection.requiredDaily.toFixed(2)}/dia</span>
                                 </p>
                               </div>
                             </div>
+                            <div className="text-right">
+                               <p className="text-[10px] text-green-200 font-bold uppercase tracking-widest">Dias Rest.</p>
+                               <p className="text-xl font-black text-white leading-none mt-1">{goalsProjection.daysRemaining}</p>
+                            </div>
                           </div>
                         </div>
-                      </Card>
+                      </div>
                     </div>
                   )}
 
                   {/* Resumo de Ganhos por Hora */}
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between ml-1">
-                      <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">Análise de Horários (Ganhos)</h3>
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Análise de Horários (Ganhos)</h3>
                     </div>
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                       {/* Bloco 1: Resumo Rápido */}
-                      <Card className="p-5 flex flex-col justify-center">
-                         <div className="flex items-center gap-2 mb-4">
-                           <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-xl">
-                             <Clock size={18} className="text-green-600 dark:text-green-400" />
+                      <div className="p-5 border border-gray-100 dark:border-white/5 rounded-2xl bg-gray-50 dark:bg-black/20 flex flex-col justify-center">
+                         <div className="flex items-center gap-3 mb-6">
+                           <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center shrink-0">
+                             <Clock size={20} className="text-green-600 dark:text-green-400" />
                            </div>
-                           <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Resumo de Horários</h4>
+                           <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest leading-tight">Resumo de<br/>Horários</h4>
                          </div>
-                         <div className="space-y-4">
-                           <div className="flex items-center justify-between border-l-4 border-green-500 pl-3 py-1">
-                             <div>
-                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Melhor Horário</p>
-                               <p className="text-sm font-black dark:text-gray-200">{hourlyData.best ? `${hourlyData.best.h}h - ${hourlyData.best.h + 1}h` : '--'}</p>
-                             </div>
-                             <div className="text-right">
-                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Média do Horário</p>
-                               <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {hourlyData.best ? hourlyData.best.val.toFixed(0) : '0'}/h</p>
+                         <div className="space-y-5">
+                           <div className="relative pl-4">
+                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-green-500 rounded-full" />
+                             <div className="flex items-center justify-between">
+                               <div>
+                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Melhor Horário</p>
+                                 <p className="text-base font-black dark:text-gray-200">{hourlyData.best ? `${hourlyData.best.h}h - ${hourlyData.best.h + 1}h` : '--'}</p>
+                               </div>
+                               <div className="text-right">
+                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Média</p>
+                                 <p className="text-base font-black text-green-600 dark:text-green-400">R$ {hourlyData.best ? hourlyData.best.val.toFixed(0) : '0'}/h</p>
+                               </div>
                              </div>
                            </div>
-                           <div className="flex items-center justify-between border-l-4 border-red-500 pl-3 py-1">
-                             <div>
-                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Pior Horário</p>
-                               <p className="text-sm font-black dark:text-gray-200">{hourlyData.worst ? `${hourlyData.worst.h}h - ${hourlyData.worst.h + 1}h` : '--'}</p>
-                             </div>
-                             <div className="text-right">
-                               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Média do Horário</p>
-                               <p className="text-sm font-black text-red-500 dark:text-red-400">R$ {hourlyData.worst ? hourlyData.worst.val.toFixed(0) : '0'}/h</p>
+                           <div className="relative pl-4">
+                             <div className="absolute left-0 top-0 bottom-0 w-1 bg-red-500 rounded-full" />
+                             <div className="flex items-center justify-between">
+                               <div>
+                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Pior Horário</p>
+                                 <p className="text-base font-black dark:text-gray-200">{hourlyData.worst ? `${hourlyData.worst.h}h - ${hourlyData.worst.h + 1}h` : '--'}</p>
+                               </div>
+                               <div className="text-right">
+                                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-0.5">Média</p>
+                                 <p className="text-base font-black text-red-500 dark:text-red-400">R$ {hourlyData.worst ? hourlyData.worst.val.toFixed(0) : '0'}/h</p>
+                               </div>
                              </div>
                            </div>
                          </div>
-                      </Card>
+                      </div>
                       
                       {/* Bloco 2: Gráfico de Barras e Contexto */}
-                      <Card className="p-5 lg:col-span-2">
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                      <div className="p-5 border border-gray-100 dark:border-white/5 rounded-2xl bg-gray-50 dark:bg-black/20 lg:col-span-2">
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-2">
                           <div>
-                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Evolução por Hora (R$/h)</p>
+                            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5 flex items-center gap-2"><Activity size={12} /> Evolução por Hora (R$/h)</p>
                             <p className="text-xs font-bold text-gray-500">{hourlyData.insightMsg}</p>
                           </div>
                         </div>
@@ -4646,16 +4775,16 @@ Exemplo de retorno:
                           <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={hourlyData.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
-                              <XAxis dataKey="hrString" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} dy={10} interval="preserveStartEnd" minTickGap={10} />
-                              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={(v) => `R$${v}`} />
-                              <Tooltip cursor={{ fill: 'transparent' }} content={({ active, payload }) => {
+                              <XAxis dataKey="hrString" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} dy={10} interval="preserveStartEnd" minTickGap={10} />
+                              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} tickFormatter={(v) => `R$${v}`} />
+                              <Tooltip cursor={{ fill: 'rgba(255,255,255,0.05)' }} content={({ active, payload }) => {
                                 if (active && payload && payload.length) {
                                   const data = payload[0].payload;
                                   return (
-                                    <div className="bg-gray-900 border border-gray-800 text-white p-3 rounded-xl shadow-xl">
-                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{data.hrString} às {data.hour+1}h</p>
-                                      <p className="text-lg font-black">R$ {data.val.toFixed(2)}<span className="text-[10px] font-medium text-gray-400">/h</span></p>
-                                      <p className={cn("text-[10px] font-bold mt-1", data.val > hourlyData.generalAvg ? "text-green-400" : "text-yellow-500")}>
+                                    <div className="bg-gray-900 border border-gray-800 text-white p-4 rounded-xl shadow-2xl backdrop-blur-xl">
+                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">{data.hrString} às {data.hour+1}h</p>
+                                      <p className="text-xl font-black text-white">R$ {data.val.toFixed(2)}<span className="text-xs font-bold text-gray-500">/h</span></p>
+                                      <p className={cn("text-[10px] font-bold mt-2", data.val > hourlyData.generalAvg ? "text-green-400" : "text-yellow-500")}>
                                         {data.val > hourlyData.generalAvg ? 'Acima' : 'Abaixo'} da sua média (R$ {hourlyData.generalAvg.toFixed(0)})
                                       </p>
                                     </div>
@@ -4663,7 +4792,7 @@ Exemplo de retorno:
                                 }
                                 return null;
                               }}/>
-                              <Bar dataKey="val" radius={[4, 4, 0, 0]}>
+                              <Bar dataKey="val" radius={[6, 6, 0, 0]}>
                                 {hourlyData.data.map((entry, index) => (
                                   <Cell key={`cell-${index}`} fill={entry.color} />
                                 ))}
@@ -4671,24 +4800,26 @@ Exemplo de retorno:
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
-                      </Card>
+                      </div>
                     </div>
                   </div>
 
                   {/* Tendência de Consumo */}
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Tendência de Consumo</h3>
-                    <Card className="p-5 flex flex-col gap-4">
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <div className="flex items-center justify-between border-b border-gray-100 dark:border-white/5 pb-4 mb-4">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest">Tendência de Consumo</h3>
+                    </div>
+                    <div className="flex flex-col gap-4">
                       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                          <div>
                            <div className="flex items-center gap-2 mb-2">
-                             <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
+                             <div className="bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/5 p-2 rounded-xl">
                                <Activity size={18} className="text-gray-600 dark:text-gray-400" />
                              </div>
-                             <h4 className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Eficácia Recente</h4>
+                             <h4 className="text-[10px] font-black uppercase text-gray-500 tracking-widest">EFICÁCIA RECENTE</h4>
                            </div>
-                           <p className="text-2xl font-black dark:text-white">{consumptionTrendConfig.generalAvg.toFixed(1)} <span className="text-xs font-bold text-gray-400">KM/L (Média)</span></p>
-                           <p className="text-xs font-bold mt-1 text-gray-500">{consumptionTrendConfig.insightMsg}</p>
+                           <p className="text-2xl font-black dark:text-white mt-1">{consumptionTrendConfig.generalAvg.toFixed(1)} <span className="text-xs font-bold text-gray-400">KM/L (Média)</span></p>
+                           <p className="text-xs font-bold mt-1.5 text-gray-500">{consumptionTrendConfig.insightMsg}</p>
                          </div>
                       </div>
 
@@ -4697,19 +4828,19 @@ Exemplo de retorno:
                           <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={consumptionTrendConfig.data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
-                              <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} dy={10} minTickGap={10} />
-                              <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={(v) => v.toFixed(1)} />
+                              <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} dy={10} minTickGap={10} />
+                              <YAxis domain={['auto', 'auto']} axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} tickFormatter={(v) => v.toFixed(1)} />
                               <Tooltip cursor={{ stroke: '#4B5563', strokeWidth: 1, strokeDasharray: '3 3' }} content={({ active, payload }) => {
                                 if (active && payload && payload.length) {
                                   const data = payload[0].payload;
                                   const isBest = data.date === consumptionTrendConfig.bestDate;
                                   const isWorst = data.date === consumptionTrendConfig.worstDate;
                                   return (
-                                    <div className="bg-gray-900 border border-gray-800 text-white p-3 rounded-xl shadow-xl">
-                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest">{data.date}</p>
-                                      <p className="text-lg font-black text-green-400">{data.kmL.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
+                                    <div className="bg-gray-900 border border-gray-800 text-white p-4 rounded-xl shadow-2xl backdrop-blur-xl">
+                                      <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest mb-1">{data.date}</p>
+                                      <p className="text-xl font-black text-green-400">{data.kmL.toFixed(1)} <span className="text-[10px] font-medium text-gray-400">km/L</span></p>
                                       {(isBest || isWorst) && (
-                                         <p className={cn("text-[10px] font-bold mt-1", isBest ? "text-green-400" : "text-red-400")}>
+                                         <p className={cn("text-[10px] font-bold mt-2", isBest ? "text-green-400" : "text-red-400")}>
                                            {isBest ? '⭐ Melhor Consumo' : '⚠️ Pior Consumo'}
                                          </p>
                                       )}
@@ -4731,40 +4862,40 @@ Exemplo de retorno:
                           </ResponsiveContainer>
                         </div>
                       ) : (
-                        <div className="h-[200px] flex items-center justify-center bg-gray-50 dark:bg-gray-800/20 rounded-xl border border-gray-100 dark:border-gray-800/40 mt-4">
-                          <p className="text-xs font-bold text-gray-400">Dados insuficientes para gerar a tendência (mínimo de 2 dias na janela selecionada).</p>
+                        <div className="h-[200px] flex items-center justify-center bg-gray-50 dark:bg-black/20 rounded-2xl border border-gray-100 dark:border-white/5 mt-4">
+                          <p className="text-[11px] font-bold text-gray-400 uppercase tracking-widest text-center px-4">Dados insuficientes para gerar a tendência<br/><span className="text-[9px] text-gray-500 mt-1 block">Mínimo de 2 dias na janela selecionada.</span></p>
                         </div>
                       )}
-                    </Card>
+                    </div>
                   </div>
 
-                  <div className="space-y-3">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">Perfil de Corridas</h3>
-                    <Card className="p-5">
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Perfil de Corridas</h3>
+                    <div className="p-5 border border-gray-100 dark:border-white/5 rounded-2xl bg-gray-50 dark:bg-black/20">
                         <div className="flex justify-between items-center mb-6">
                           <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Baseado no seu Histórico</p>
-                          <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded-xl">
+                          <div className="bg-white dark:bg-gray-800 shadow-sm p-2 rounded-xl">
                             <MapPin size={18} className="text-gray-600 dark:text-gray-400" />
                           </div>
                         </div>
                         
-                        <div className="space-y-4">
+                        <div className="space-y-5">
                           {[
                             { label: 'Curtas (< 5km)', val: tripProfile.shortPerc, avg: tripProfile.shortAvgVal, color: 'bg-green-400' },
                             { label: 'Médias (5-12km)', val: tripProfile.mediumPerc, avg: tripProfile.mediumAvgVal, color: 'bg-green-600' },
                             { label: 'Longas (> 12km)', val: tripProfile.longPerc, avg: tripProfile.longAvgVal, color: 'bg-green-800' }
                           ].map(p => (
-                            <div key={p.label} className="space-y-1.5">
-                              <div className="flex justify-between text-[10px] font-bold uppercase text-gray-500 items-end">
-                                <div className="space-y-0.5">
-                                  <span className="block">{p.label}</span>
-                                  <span className="text-gray-400 dark:text-gray-500 text-[9px]">
-                                    Média: R$ {p.avg.toFixed(2)}
+                            <div key={p.label} className="space-y-2">
+                              <div className="flex justify-between text-[10px] items-end">
+                                <div className="space-y-1">
+                                  <span className="block font-black uppercase text-gray-500 tracking-widest">{p.label}</span>
+                                  <span className="text-gray-400 dark:text-gray-500 font-bold tracking-widest">
+                                    MÉDIA: R$ {p.avg.toFixed(2)}
                                   </span>
                                 </div>
-                                <span className="text-sm dark:text-gray-300">{p.val.toFixed(0)}%</span>
+                                <span className="text-sm font-black dark:text-gray-200">{p.val.toFixed(0)}%</span>
                               </div>
-                              <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden">
+                              <div className="w-full bg-gray-200 dark:bg-gray-800 h-2.5 rounded-full overflow-hidden shadow-inner">
                                 <motion.div 
                                   initial={{ width: 0 }}
                                   animate={{ width: `${p.val}%` }}
@@ -4774,81 +4905,81 @@ Exemplo de retorno:
                             </div>
                           ))}
                         </div>
-                      </Card>
+                      </div>
                     </div>
 
                   {/* Top Turnos - Ranking */}
-                  <div className="space-y-4">
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest ml-1">🏆 Hall da Fama (Mês Atual)</h3>
-                    <Card className="p-5">
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-4">
+                  <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                    <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">🏆 Hall da Fama (Mês Atual)</h3>
+                    <div className="p-5 border border-gray-100 dark:border-white/5 rounded-2xl bg-gray-50 dark:bg-black/20">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-8 md:gap-6">
                         {/* Melhor Faturamento */}
-                        <div className="space-y-3">
-                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest ml-1 text-center md:text-left">Top Faturamento</p>
-                          <div className="space-y-2">
+                        <div className="space-y-4">
+                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest flex items-center justify-center md:justify-start gap-1.5 border-b border-green-200 dark:border-green-900/30 pb-2"><DollarSign size={12}/> Top Faturamento</p>
+                          <div className="space-y-3">
                             {topShifts.revenue.length === 0 ? (
-                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                              <p className="text-[11px] font-bold text-gray-400 text-center py-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800">Sem dados no mês</p>
                             ) : topShifts.revenue.map((s, i) => (
-                              <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                              <div key={s.id} className="bg-white dark:bg-gray-900 shadow-sm rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-0.5">
                                 <div className="flex items-center gap-3">
                                   <span className={cn(
-                                    "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                    "w-7 h-7 flex items-center justify-center rounded-lg text-[10px] font-black shadow-inner",
                                     i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
                                   )}>{i+1}º</span>
-                                  <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                  <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
                                 </div>
-                                <p className="font-black text-green-600 dark:text-green-400">R$ {s.totalRevenue.toFixed(2)}</p>
+                                <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {s.totalRevenue.toFixed(2)}</p>
                               </div>
                             ))}
                           </div>
                         </div>
 
                         {/* Melhor R$/Hora */}
-                        <div className="space-y-3">
-                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest ml-1 text-center md:text-left">Top R$ / Hora</p>
-                          <div className="space-y-2">
+                        <div className="space-y-4">
+                          <p className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest flex items-center justify-center md:justify-start gap-1.5 border-b border-green-200 dark:border-green-900/30 pb-2"><Clock size={12}/> Top R$ / Hora</p>
+                          <div className="space-y-3">
                             {topShifts.rph.length === 0 ? (
-                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                              <p className="text-[11px] font-bold text-gray-400 text-center py-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800">Sem dados no mês</p>
                             ) : topShifts.rph.map((s, i) => (
-                              <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                              <div key={s.id} className="bg-white dark:bg-gray-900 shadow-sm rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-0.5">
                                 <div className="flex items-center gap-3">
                                   <span className={cn(
-                                    "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                    "w-7 h-7 flex items-center justify-center rounded-lg text-[10px] font-black shadow-inner",
                                     i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
                                   )}>{i+1}º</span>
-                                  <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                  <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
                                 </div>
-                                <p className="font-black text-green-600 dark:text-green-400">R$ {(s.totalRevenue / (s.activeTimeSeconds / 3600)).toFixed(2)}</p>
+                                <p className="text-sm font-black text-green-600 dark:text-green-400">R$ {(s.totalRevenue / (s.activeTimeSeconds / 3600)).toFixed(2)}</p>
                               </div>
                             ))}
                           </div>
                         </div>
 
                         {/* Melhor R$/KM */}
-                        <div className="space-y-3">
-                          <p className="text-[10px] font-black text-purple-600 dark:text-purple-400 uppercase tracking-widest ml-1 text-center md:text-left">Top R$ / KM</p>
-                          <div className="space-y-2">
+                        <div className="space-y-4">
+                          <p className="text-[10px] font-black text-purple-600 dark:text-purple-400 uppercase tracking-widest flex items-center justify-center md:justify-start gap-1.5 border-b border-purple-200 dark:border-purple-900/30 pb-2"><MapPin size={12}/> Top R$ / KM</p>
+                          <div className="space-y-3">
                             {topShifts.rpkm.length === 0 ? (
-                              <p className="text-xs text-gray-400 text-center py-4">Sem dados no mês</p>
+                              <p className="text-[11px] font-bold text-gray-400 text-center py-6 bg-white dark:bg-gray-900 rounded-xl border border-gray-100 dark:border-gray-800">Sem dados no mês</p>
                             ) : topShifts.rpkm.map((s, i) => {
                               const km = s.totalWorkKm || (s.endKm - s.startKm);
                               return (
-                                <div key={s.id} className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800">
+                                <div key={s.id} className="bg-white dark:bg-gray-900 shadow-sm rounded-xl p-3 flex items-center justify-between border border-gray-100 dark:border-gray-800 transition-transform hover:-translate-y-0.5">
                                   <div className="flex items-center gap-3">
                                     <span className={cn(
-                                      "w-6 h-6 flex items-center justify-center rounded-lg text-[10px] font-black",
+                                      "w-7 h-7 flex items-center justify-center rounded-lg text-[10px] font-black shadow-inner",
                                       i === 0 ? "bg-yellow-100 text-yellow-700" : i === 1 ? "bg-gray-200 text-gray-600" : "bg-orange-100 text-orange-700"
                                     )}>{i+1}º</span>
-                                    <span className="text-[10px] font-bold text-gray-500 uppercase">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+                                    <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
                                   </div>
-                                  <p className="font-black text-purple-600 dark:text-purple-400">R$ {(km > 0 ? s.totalRevenue / km : 0).toFixed(2)}</p>
+                                  <p className="text-sm font-black text-purple-600 dark:text-purple-400">R$ {(km > 0 ? s.totalRevenue / km : 0).toFixed(2)}</p>
                                 </div>
                               );
                             })}
                           </div>
                         </div>
                       </div>
-                    </Card>
+                    </div>
                   </div>
 
                   {/* AI Analysis */}
@@ -4898,11 +5029,13 @@ Exemplo de retorno:
             >
               <h2 className="text-2xl font-bold dark:text-white">Configurações</h2>
               {settings && (
-                <SettingsForm 
-                  settings={settings} 
-                  onSubmit={updateSettings} 
-                  onBackup={exportAllDataToJSON}
-                />
+                <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col p-6">
+                  <SettingsForm 
+                    settings={settings} 
+                    onSubmit={updateSettings} 
+                    onBackup={exportAllDataToJSON}
+                  />
+                </div>
               )}
             </motion.div>
           )}
@@ -5088,6 +5221,78 @@ Exemplo de retorno:
         </div>
       </Modal>
 
+      <Modal isOpen={showComparisonModal} onClose={() => setShowComparisonModal(false)} title="Comparativo de Desempenho">
+        {historyComparisonData && historyComparisonData.current ? (
+          <div className="space-y-6">
+            <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl flex flex-col gap-1 border border-gray-100 dark:border-gray-800">
+              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest text-center mb-4">Visão Geral: {historyRangeLabel.type}</p>
+              
+              <div className="grid grid-cols-1 gap-4">
+                <ComparisonCard 
+                  title="Total Faturado"
+                  icon={<DollarSign size={16} />}
+                  current={historyComparisonData.current.revenue}
+                  prev={historyComparisonData.previous.revenue}
+                  avg={historyComparisonData.average.revenue}
+                  format={(v: number) => `R$ ${v.toFixed(2)}`}
+                  labelPrev={historyComparisonData.labelPrev}
+                  labelAvg={historyComparisonData.labelAvg}
+                  higherIsBetter={true}
+                />
+                <ComparisonCard 
+                  title="R$/Hora Médio"
+                  icon={<Activity size={16} />}
+                  current={historyComparisonData.current.rph}
+                  prev={historyComparisonData.previous.rph}
+                  avg={historyComparisonData.average.rph}
+                  format={(v: number) => `R$ ${v.toFixed(2)}/h`}
+                  labelPrev={historyComparisonData.labelPrev}
+                  labelAvg={historyComparisonData.labelAvg}
+                  higherIsBetter={true}
+                />
+                <ComparisonCard 
+                  title="R$/KM Médio"
+                  icon={<MapPin size={16} />}
+                  current={historyComparisonData.current.rpkm}
+                  prev={historyComparisonData.previous.rpkm}
+                  avg={historyComparisonData.average.rpkm}
+                  format={(v: number) => `R$ ${v.toFixed(2)}/km`}
+                  labelPrev={historyComparisonData.labelPrev}
+                  labelAvg={historyComparisonData.labelAvg}
+                  higherIsBetter={true}
+                />
+                <ComparisonCard 
+                  title="Horas de Direção"
+                  icon={<Clock size={16} />}
+                  current={historyComparisonData.current.time}
+                  prev={historyComparisonData.previous.time}
+                  avg={historyComparisonData.average.time}
+                  format={(v: number) => `${Math.floor(v/3600)}h${Math.floor((v%3600)/60).toString().padStart(2, '0')}m`}
+                  labelPrev={historyComparisonData.labelPrev}
+                  labelAvg={historyComparisonData.labelAvg}
+                  higherIsBetter={true}
+                />
+              </div>
+            </div>
+            
+            {(historyFilter === 'week' && planningMetrics) && (
+              <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 p-4 rounded-2xl">
+                 <p className="text-[10px] text-green-700 dark:text-green-400 font-black uppercase tracking-widest mb-2 flex items-center justify-between"><span>Progresso da Meta Mensal</span> <span>{Math.min(100, (planningMetrics.revenueSoFar / planningMetrics.revenueNeededTotal) * 100).toFixed(1)}%</span></p>
+                 <div className="w-full bg-green-200 dark:bg-green-900/40 h-2.5 rounded-full overflow-hidden shadow-inner">
+                    <div 
+                      className="h-full bg-green-500 transition-all duration-1000"
+                      style={{ width: `${Math.min(100, (planningMetrics.revenueSoFar / Math.max(1, planningMetrics.revenueNeededTotal)) * 100)}%` }}
+                    />
+                 </div>
+                 <p className="text-xs text-green-800 dark:text-green-300 font-medium mt-3">Você faturou <strong>R$ {planningMetrics.revenueSoFar.toFixed(2)}</strong> do objetivo total de <strong>R$ {planningMetrics.revenueNeededTotal.toFixed(2)}</strong>.</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-center text-sm text-gray-500 py-10">Dados insuficientes para comparação.</p>
+        )}
+      </Modal>
+
       <Modal isOpen={showAiResultModal} onClose={() => setShowAiResultModal(false)} title="Insights da IA">
         <div className="space-y-6">
           <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-2xl flex items-center gap-3 border border-green-100 dark:border-green-800/50">
@@ -5239,7 +5444,7 @@ Exemplo de retorno:
         {editingShift && (
           <PastShiftForm 
             initialData={editingShift} 
-            onSubmit={(start, end, startKm, endKm, revenue, trips, avgCons) => 
+            onSubmit={(start, end, startKm, endKm, revenue, trips, avgCons, activeSecs) => 
               updateShift(editingShift.id, {
                 startTime: Timestamp.fromDate(start),
                 endTime: Timestamp.fromDate(end),
@@ -5247,7 +5452,8 @@ Exemplo de retorno:
                 endKm,
                 totalRevenue: revenue,
                 totalTrips: trips,
-                avgConsumption: avgCons
+                avgConsumption: avgCons,
+                activeTimeSeconds: activeSecs
               })
             } 
             onDelete={() => deleteShift(editingShift.id)}
@@ -5448,11 +5654,13 @@ function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
-        className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl transition-colors"
+        className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl transition-colors max-h-[90dvh] flex flex-col"
       >
-        <div className="w-12 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-8 sm:hidden" />
-        <h3 className="text-2xl font-bold mb-8 tracking-tight dark:text-white">{title}</h3>
-        {children}
+        <div className="w-12 h-1.5 shrink-0 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-6 sm:hidden" />
+        <h3 className="text-2xl shrink-0 font-bold mb-6 tracking-tight dark:text-white">{title}</h3>
+        <div className="overflow-y-auto -mx-2 px-2 pb-2">
+          {children}
+        </div>
       </motion.div>
     </div>
   );
@@ -5846,8 +6054,59 @@ function FuelForm({ onSubmit, initialData, onDelete }: {
   );
 }
 
+function ComparisonCard({ title, icon, current, prev, avg, format, labelPrev, labelAvg, higherIsBetter }: any) {
+  const getDiff = (a: number, b: number) => {
+    if (b === 0) return { pct: 0, str: '0%', good: true };
+    const diff = ((a - b) / b) * 100;
+    const isGood = higherIsBetter ? diff >= 0 : diff <= 0;
+    return { pct: diff, str: `${diff >= 0 ? '+' : ''}${diff.toFixed(1)}%`, good: isGood };
+  };
+
+  const diffPrev = getDiff(current, prev);
+  const diffAvg = getDiff(current, avg);
+
+  return (
+    <div className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-gray-100 dark:border-gray-800 shadow-sm relative overflow-hidden">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="text-gray-400 dark:text-gray-500">{icon}</div>
+        <p className="text-xs font-black uppercase tracking-widest text-gray-500 dark:text-gray-400">{title}</p>
+      </div>
+      
+      <p className="text-xl sm:text-2xl font-black text-gray-900 dark:text-white tracking-tight mb-4">{format(current)}</p>
+      
+      <div className="space-y-2">
+        <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-2 rounded-lg text-[11px] font-bold">
+           <span className="text-gray-500 dark:text-gray-400 uppercase tracking-wider">Vs. {labelPrev}</span>
+           <div className="flex items-center gap-2">
+             <span className="text-gray-400 font-medium tabular-nums">{format(prev)}</span>
+             {prev > 0 ? (
+               <span className={cn("px-1.5 py-0.5 rounded flex items-center gap-0.5", diffPrev.good ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400")}>
+                 {diffPrev.good ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                 {diffPrev.str}
+               </span>
+             ) : <span className="text-gray-400 font-medium tracking-wide">Sem dados</span>}
+           </div>
+        </div>
+        
+        <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/50 p-2 rounded-lg text-[11px] font-bold">
+           <span className="text-gray-500 dark:text-gray-400 uppercase tracking-wider">Vs. {labelAvg}</span>
+           <div className="flex items-center gap-2">
+             <span className="text-gray-400 font-medium tabular-nums">{format(avg)}</span>
+             {avg > 0 ? (
+               <span className={cn("px-1.5 py-0.5 rounded flex items-center gap-0.5", diffAvg.good ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400")}>
+                 {diffAvg.good ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                 {diffAvg.str}
+               </span>
+             ) : <span className="text-gray-400 font-medium tracking-wide">Sem dados</span>}
+           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PastShiftForm({ onSubmit, initialData, onDelete }: { 
-  onSubmit: (start: Date, end: Date, startKm: number, endKm: number, revenue: number, trips: number, avgCons?: number) => void,
+  onSubmit: (start: Date, end: Date, startKm: number, endKm: number, revenue: number, trips: number, avgCons?: number, activeTimeSeconds?: number) => void,
   initialData?: Shift,
   onDelete?: () => void
 }) {
@@ -5860,11 +6119,22 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
   const [avgCons, setAvgCons] = useState(initialData ? (initialData.avgConsumption || '').toString() : '');
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
 
+  const [activeTimeStr, setActiveTimeStr] = useState(() => {
+    if (!initialData) return '';
+    const secs = initialData.activeTimeSeconds || Math.max(0, differenceInSeconds(initialData.endTime?.toDate() || new Date(), initialData.startTime?.toDate() || new Date()));
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  });
+
   return (
     <div className="space-y-6 overflow-y-auto max-h-[60vh] pr-2">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="Início" type="datetime-local" value={start} onChange={e => setStart(e.target.value)} />
         <Input label="Fim" type="datetime-local" value={end} onChange={e => setEnd(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <Input label="Tempo Trabalhado (HH:mm)" type="text" placeholder="Ex: 05:30" value={activeTimeStr} onChange={e => setActiveTimeStr(e.target.value)} />
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <Input label="KM Inicial" type="number" inputMode="numeric" value={startKm} onChange={e => setStartKm(e.target.value)} />
@@ -5877,7 +6147,16 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
       <div className="space-y-3">
         {!showConfirmDelete ? (
           <>
-            <Button onClick={() => onSubmit(new Date(start), new Date(end), Number(startKm), Number(endKm), Number(revenue), Number(trips), Number(avgCons))} className="w-full py-4">
+            <Button onClick={() => {
+              let activeSecs: number | undefined;
+              if (activeTimeStr && activeTimeStr.includes(':')) {
+                const parts = activeTimeStr.split(':');
+                if (parts.length === 2 && !isNaN(Number(parts[0])) && !isNaN(Number(parts[1]))) {
+                  activeSecs = (Number(parts[0]) * 3600) + (Number(parts[1]) * 60);
+                }
+              }
+              onSubmit(new Date(start), new Date(end), Number(startKm), Number(endKm), Number(revenue), Number(trips), Number(avgCons), activeSecs);
+            }} className="w-full py-4">
               {initialData ? 'Atualizar Turno' : 'Salvar Turno'}
             </Button>
             {onDelete && (
