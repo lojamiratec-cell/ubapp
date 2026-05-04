@@ -27,7 +27,7 @@ import {
 import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell 
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie
 } from 'recharts';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -652,6 +652,33 @@ export default function App() {
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [insightFilter, setInsightFilter] = useState<'day' | 'week' | 'month'>('month');
+  const [insightReferenceDate, setInsightReferenceDate] = useState(new Date());
+
+  const insightRangeLabel = useMemo(() => {
+    if (insightFilter === 'day') {
+      if (isSameDay(insightReferenceDate, new Date())) return { type: 'Dia', label: 'Hoje' };
+      return { type: 'Dia', label: format(insightReferenceDate, 'dd/MM/yyyy') };
+    } else if (insightFilter === 'week') {
+      const start = startOfWeek(insightReferenceDate, { weekStartsOn: 1 });
+      const end = endOfWeek(insightReferenceDate, { weekStartsOn: 1 });
+      if (isSameWeek(insightReferenceDate, new Date(), { weekStartsOn: 1 })) return { type: 'Semana', label: 'Nesta Semana' };
+      return { type: 'Semana', label: `${format(start, 'dd/MM')} - ${format(end, 'dd/MM')}` };
+    }
+    if (isSameMonth(insightReferenceDate, new Date())) return { type: 'Mês', label: 'Neste Mês' };
+    return { type: 'Mês', label: format(insightReferenceDate, 'MMMM yyyy', { locale: ptBR }) };
+  }, [insightFilter, insightReferenceDate]);
+
+  const prevInsightRange = () => {
+    if (insightFilter === 'day') setInsightReferenceDate(prev => subDays(prev, 1));
+    else if (insightFilter === 'week') setInsightReferenceDate(prev => subWeeks(prev, 1));
+    else if (insightFilter === 'month') setInsightReferenceDate(prev => subMonths(prev, 1));
+  };
+  
+  const nextInsightRange = () => {
+    if (insightFilter === 'day') setInsightReferenceDate(prev => addDays(prev, 1));
+    else if (insightFilter === 'week') setInsightReferenceDate(prev => addWeeks(prev, 1));
+    else if (insightFilter === 'month') setInsightReferenceDate(prev => addMonths(prev, 1));
+  };
 
   useEffect(() => {
     if (darkMode) {
@@ -1960,14 +1987,14 @@ REGRAS CRÍTICAS:
 
       const viagensPorHora = metrics.totalHours > 0 ? (metrics.totalTrips / metrics.totalHours).toFixed(2) : '0.00';
 
-      const now = new Date();
+      const targetDate = insightReferenceDate;
       let filteredShiftsForAi = shifts.filter(s => s.status === 'finished');
       if (insightFilter === 'day') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameDay((s.startTime?.toDate() || new Date()), now));
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameDay((s.startTime?.toDate() || new Date()), targetDate));
       } else if (insightFilter === 'week') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), now, { weekStartsOn: 1 }));
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
       } else if (insightFilter === 'month') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), now));
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), targetDate));
       }
 
       const recentShifts = filteredShiftsForAi
@@ -1997,15 +2024,21 @@ REGRAS CRÍTICAS:
         - Viagens/Hora: ${viagensPorHora}
         - R$/KM Médio: R$ ${metrics.revenuePerKm.toFixed(2)}
         - Ticket Médio: R$ ${metrics.ticketMedio.toFixed(2)}
+
+        RECEITA EXTRA (ANÁLISE DE CUSTO-BENEFÍCIO):
+        - Faturamento com Dinâmico: R$ ${metrics.totalDynamicValue.toFixed(2)}
+        - Ganhos com Taxas de Cancelamento: R$ ${metrics.totalCancelledValue.toFixed(2)} (${metrics.totalCancelledTrips} canceladas)
+        - Melhor Dia P/ Trabalho: ${metrics.bestDayInfo.day !== -1 ? ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][metrics.bestDayInfo.day] : 'N/A'} (R$ ${metrics.bestDayInfo.rph.toFixed(2)}/h)
+        - Melhor Horário P/ Trabalho: ${metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour}:00` : 'N/A'} (R$ ${metrics.bestHourInfo.rph.toFixed(2)}/h)
         
         DADOS DIÁRIOS/TURNOS E CORRIDAS:
         ${shiftsDataForAI}
         
         SUA TAREFA - FORNEÇA UM RELATÓRIO ESTRUTURADO NESTES 3 PILARES:
 
-        1. 🔍 DIAGNÓSTICO DO PERFIL ATUAL: Qual o padrão atual de corridas do motorista? (Foca em corridas curtas ou longas? Ticket alto ou volume?). Aponte imediatamente o elo mais fraco (ex: R$/Hora baixo devido a corridas longas vazias).
+        1. 🔍 DIAGNÓSTICO E RECEITA EXTRA: Qual o padrão atual de corridas? Fale sobre o ticket médio e pontue se o motorista está ou não tirando bom proveito de Dinâmicos e Cancelamentos para aumentar o lucro líquido.
         2. 🏆 META IDEAL (OS MELHORES 20%): Encontre os 20% melhores turnos nesse histórico. Quais foram os valores de R$/KM, R$/Hora e ticket médio nesses dias de pico? Defina esses números agressivamente como o NOVO PADRÃO IDEAL diário.
-        3. ⚡ PLANO DE AÇÃO TÁTICO: Dê 3 diretrizes pragmáticas baseadas nos dias analisados (ex: "As corridas precisam pagar mais de R$ 2,20/km. Se estiver faturando abaixo de R$ 35/h na terça de manhã, pause."). Identifique os períodos mais e menos lucrativos.
+        3. ⚡ PLANO DE AÇÃO TÁTICO: Dê 3 diretrizes pragmáticas baseadas nos dias analisados (ex: "As corridas precisam pagar mais de R$ 2,20/km. Busque dinâmicos nas manhãs de Segunda."). Identifique os períodos mais e menos lucrativos.
 
         REGRAS IMPORTANTES:
         - A resposta DEVE ter NO MÁXIMO 1500 caracteres, mas precisa ser densa, inteligente e baseada rigidamente nos dados acima.
@@ -2334,14 +2367,14 @@ Exemplo de retorno:
   }, [shifts]);
 
   const hourlyData = useMemo(() => {
-    const now = new Date();
+    const targetDate = insightReferenceDate;
     let filteredShifts = shifts.filter(s => s.status === 'finished');
     if (insightFilter === 'day') {
-      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), now));
+      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
     } else if (insightFilter === 'week') {
-      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), now, { weekStartsOn: 1 }));
+      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
     } else if (insightFilter === 'month') {
-      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), now));
+      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
     }
 
     const stats: Record<number, { revenue: number, seconds: number }> = {};
@@ -2408,11 +2441,13 @@ Exemplo de retorno:
   }, [shifts, insightFilter]);
 
   const consumptionTrendConfig = useMemo(() => {
-    const now = new Date();
-    const daysWindow = insightFilter === 'month' ? 30 : 7;
-    const startDate = subDays(startOfDay(now), daysWindow - 1);
+    const targetDate = insightReferenceDate;
+    const daysWindow = insightFilter === 'month' ? 30 : insightFilter === 'week' ? 7 : 1;
+    const startDate = subDays(startOfDay(targetDate), daysWindow - 1);
     
-    const recentShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= startDate);
+    // We only want data UP TO the targetDate to build the trend
+    const endDate = endOfDay(targetDate);
+    const recentShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= startDate && ensureDate(s.startTime) <= endDate);
     const byDate: Record<string, { km: number, l: number }> = {};
     const resultArr: { date: string, kmL: number, millis: number }[] = [];
     
@@ -2530,24 +2565,84 @@ Exemplo de retorno:
     };
   }, [shifts]);
 
+  const chartsData = useMemo(() => {
+    const targetDate = insightReferenceDate;
+    let filteredShifts = shifts.filter(s => s.status === 'finished');
+    
+    if (insightFilter === 'day') {
+      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+      // For a single day, we might want to show revenue per hour
+      const byHour: Record<string, number> = {};
+      filteredShifts.forEach(s => {
+         const shiftTripsList = shiftTrips[s.id] || [];
+         shiftTripsList.forEach(t => {
+            if (t.isCancelled) return;
+            const h = ensureDate(t.startTime || t.timestamp).getHours();
+            const hStr = `${h.toString().padStart(2, '0')}:00`;
+            if (!byHour[hStr]) byHour[hStr] = 0;
+            byHour[hStr] += t.value;
+         });
+      });
+      // If no trips, use shift average
+      if (Object.keys(byHour).length === 0) {
+        filteredShifts.forEach(s => {
+           const durationH = s.activeTimeSeconds / 3600;
+           const valPerH = durationH > 0 ? s.totalRevenue / durationH : s.totalRevenue;
+           const h = ensureDate(s.startTime).getHours();
+           const hStr = `${h.toString().padStart(2, '0')}:00`;
+           if (!byHour[hStr]) byHour[hStr] = 0;
+           byHour[hStr] += valPerH;
+        });
+      }
+      return {
+        barData: Object.entries(byHour).map(([key, val]) => ({ name: key, value: val })).sort((a,b) => a.name.localeCompare(b.name)),
+        pieData: [] // Calculated below using metrics
+      };
+    } else {
+      if (insightFilter === 'week') {
+        filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+      } else if (insightFilter === 'month') {
+        filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
+      }
+      const byDay: Record<string, number> = {};
+      filteredShifts.forEach(s => {
+         const dStr = format(ensureDate(s.startTime), 'dd/MM');
+         if (!byDay[dStr]) byDay[dStr] = 0;
+         byDay[dStr] += s.totalRevenue;
+      });
+      
+      const sortedDates = Object.keys(byDay).sort((a, b) => {
+         const [da, ma] = a.split('/').map(Number);
+         const [db, mb] = b.split('/').map(Number);
+         if (ma !== mb) return ma - mb;
+         return da - db;
+      });
+      
+      return {
+        barData: sortedDates.map(dStr => ({ name: dStr, value: byDay[dStr] })),
+        pieData: []
+      };
+    }
+  }, [shifts, shiftTrips, insightFilter, insightReferenceDate]);
+
   const metrics = useMemo(() => {
-    const now = new Date();
+    const targetDate = insightReferenceDate;
     let filteredShifts = shifts.filter(s => s.status === 'finished');
     let filteredExpenses = expenses;
     let filteredFuel = fuelRecords;
 
     if (insightFilter === 'day') {
-      filteredShifts = filteredShifts.filter(s => isSameDay((s.startTime?.toDate() || new Date()), now));
-      filteredExpenses = expenses.filter(e => isSameDay((e.date?.toDate() || new Date()), now));
-      filteredFuel = fuelRecords.filter(f => isSameDay((f.date?.toDate() || new Date()), now));
+      filteredShifts = filteredShifts.filter(s => isSameDay((s.startTime?.toDate() || new Date()), targetDate));
+      filteredExpenses = expenses.filter(e => isSameDay((e.date?.toDate() || new Date()), targetDate));
+      filteredFuel = fuelRecords.filter(f => isSameDay((f.date?.toDate() || new Date()), targetDate));
     } else if (insightFilter === 'week') {
-      filteredShifts = filteredShifts.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), now, { weekStartsOn: 1 }));
-      filteredExpenses = expenses.filter(e => isSameWeek((e.date?.toDate() || new Date()), now, { weekStartsOn: 1 }));
-      filteredFuel = fuelRecords.filter(f => isSameWeek((f.date?.toDate() || new Date()), now, { weekStartsOn: 1 }));
+      filteredShifts = filteredShifts.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
+      filteredExpenses = expenses.filter(e => isSameWeek((e.date?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
+      filteredFuel = fuelRecords.filter(f => isSameWeek((f.date?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
     } else if (insightFilter === 'month') {
-      filteredShifts = filteredShifts.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), now));
-      filteredExpenses = expenses.filter(e => isSameMonth((e.date?.toDate() || new Date()), now));
-      filteredFuel = fuelRecords.filter(f => isSameMonth((f.date?.toDate() || new Date()), now));
+      filteredShifts = filteredShifts.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), targetDate));
+      filteredExpenses = expenses.filter(e => isSameMonth((e.date?.toDate() || new Date()), targetDate));
+      filteredFuel = fuelRecords.filter(f => isSameMonth((f.date?.toDate() || new Date()), targetDate));
     }
 
     if (filteredShifts.length === 0) return null;
@@ -2597,9 +2692,17 @@ Exemplo de retorno:
     let totalCancelledTrips = 0;
     let totalCancelledValue = 0;
     let allTripsInPeriod: Trip[] = [];
+    const shiftsMissingTrips: string[] = [];
 
     filteredShifts.forEach(shift => {
       const trips = shiftTrips[shift.id] || [];
+      if (trips.length === 0 && shift.totalRevenue > 0) {
+        const dayStr = format(ensureDate(shift.startTime), 'dd/MM');
+        if (!shiftsMissingTrips.includes(dayStr)) {
+          shiftsMissingTrips.push(dayStr);
+        }
+      }
+      
       allTripsInPeriod = allTripsInPeriod.concat(trips);
       trips.forEach(t => {
         if (t.dynamicValue) totalDynamicValue += t.dynamicValue;
@@ -2666,6 +2769,16 @@ Exemplo de retorno:
       }
     });
 
+    const netProfit = totalRevenue - estimatedFuelCost - maintenanceCost - personalFuelCost;
+    
+    // Build Pie Data
+    const pieData = [
+      { name: "Lucro Líquido", value: Math.max(0, netProfit), color: "#16A34A" }, // green-600
+      { name: "Combustível Trabalhado", value: estimatedFuelCost, color: "#3B82F6" }, // blue-500
+      { name: "Manutenção e Degradação", value: maintenanceCost, color: "#F59E0B" }, // amber-500
+      { name: "Combustível Pessoal", value: personalFuelCost, color: "#EF4444" }, // red-500
+    ].filter(i => i.value > 0);
+
     return {
       top3BestTrips,
       top3WorstTrips,
@@ -2695,7 +2808,9 @@ Exemplo de retorno:
       totalDynamicValue,
       totalCancelledTrips,
       totalCancelledValue,
-      allTripsInPeriod
+      allTripsInPeriod,
+      shiftsMissingTrips,
+      pieData
     };
   }, [shifts, expenses, fuelRecords, insightFilter, settings, shiftTrips]);
 
@@ -2978,7 +3093,7 @@ Exemplo de retorno:
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600"></div>
       </div>
     );
@@ -3087,9 +3202,9 @@ Exemplo de retorno:
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-24 font-sans text-gray-900 dark:text-gray-100 transition-colors">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-32 font-sans text-gray-900 dark:text-gray-100 transition-colors">
       {/* Header */}
-      <header className="bg-white dark:bg-[#111827] border-b border-gray-100 dark:border-gray-800 px-4 sm:px-6 py-3 sticky top-0 z-30 flex items-center justify-between transition-colors relative">
+      <header className="bg-white dark:bg-[#111827] border-b border-gray-100 dark:border-gray-800 px-4 sm:px-6 pb-3 pt-safe sticky top-0 z-30 flex items-center justify-between transition-colors relative">
         <div className="flex items-center gap-2 sm:gap-3 z-10">
           <div className="bg-green-600 p-1.5 sm:p-2 rounded-xl">
             <Car className="text-white" size={20} />
@@ -3188,7 +3303,7 @@ Exemplo de retorno:
                 <div className="text-center py-5 relative z-10">
                   <div className={cn(
                     "text-5xl sm:text-6xl leading-none font-mono font-black tracking-tighter mb-2",
-                    activeShift?.status === 'active' ? "text-transparent bg-clip-text bg-gradient-to-b from-white to-gray-400 drop-shadow-sm" : "text-gray-900 dark:text-white"
+                    activeShift?.status === 'active' ? "text-white drop-shadow-md" : "text-gray-900 dark:text-gray-300"
                   )}>
                     {formatTime(elapsedTime)}
                   </div>
@@ -4335,19 +4450,38 @@ Exemplo de retorno:
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              <div className="flex flex-wrap bg-white dark:bg-gray-900 p-1 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors">
-                {(['day', 'week', 'month'] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setInsightFilter(f)}
-                    className={cn(
-                      "flex-1 py-2 text-xs font-bold uppercase tracking-wider rounded-xl transition-all",
-                      insightFilter === f ? "bg-green-600 text-white shadow-md" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-                    )}
+              <div className="flex flex-col gap-3 bg-white dark:bg-gray-900 p-2 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors">
+                <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800/50 p-1 rounded-xl">
+                  {(['day', 'week', 'month'] as const).map((f) => (
+                    <button
+                      key={f}
+                      onClick={() => setInsightFilter(f)}
+                      className={cn(
+                        "flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                        insightFilter === f ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                      )}
+                    >
+                      {f === 'day' ? 'Diário' : f === 'week' ? 'Semanal' : 'Mensal'}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between px-2 pb-1">
+                  <button 
+                    onClick={prevInsightRange}
+                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
                   >
-                    {f === 'day' ? 'Hoje' : f === 'week' ? 'Semana' : 'Mês'}
+                    <ChevronLeft size={16} />
                   </button>
-                ))}
+                  <div className="text-center font-black text-sm dark:text-white capitalize">
+                    {insightRangeLabel.label}
+                  </div>
+                  <button 
+                    onClick={nextInsightRange}
+                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
               </div>
 
               {!metrics ? (
@@ -4389,6 +4523,33 @@ Exemplo de retorno:
                       </div>
                     </div>
                   </div>
+
+                  {/* Gráfico de Faturamento */}
+                  {chartsData.barData.length > 0 && (
+                    <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Evolução de Faturamento</h3>
+                      <div className="h-[200px] w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={chartsData.barData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.2} />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF', fontWeight: 600 }} dy={10} minTickGap={10} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#9CA3AF' }} tickFormatter={(value) => `R$${value}`} width={40} />
+                            <Tooltip 
+                              cursor={{ fill: 'transparent' }}
+                              contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', borderRadius: '12px', color: '#fff', fontSize: '12px', fontWeight: 'bold' }}
+                              itemStyle={{ color: '#22C55E' }}
+                              formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Faturamento']}
+                            />
+                            <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                              {chartsData.barData.map((e, idx) => (
+                                 <Cell key={`cell-${idx}`} fill="#16A34A" />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Métricas Principais */}
                   <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
@@ -4486,6 +4647,15 @@ Exemplo de retorno:
                             </p>
                           )}
                        </div>
+
+                       {metrics.shiftsMissingTrips.length > 0 && (
+                         <div className="col-span-2 mt-2 p-3 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-900/30 rounded-xl flex gap-3 items-start">
+                           <div className="text-yellow-600 dark:text-yellow-400 mt-0.5"><Sparkles size={16} /></div>
+                           <p className="text-[11px] text-yellow-800 dark:text-yellow-300 font-medium leading-relaxed">
+                             Cadastre os detalhes das suas corridas nos turnos dos dias <span className="font-bold">{metrics.shiftsMissingTrips.length > 3 ? metrics.shiftsMissingTrips.slice(0, 3).join(', ') + ' e outros' : metrics.shiftsMissingTrips.join(', ')}</span> para uma análise estratégica mais profunda e exata.
+                           </p>
+                         </div>
+                       )}
                     </div>
                   </div>
 
@@ -4573,6 +4743,49 @@ Exemplo de retorno:
                   <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6 mt-4">
                     <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Custos & Lucro (Período Atual)</h3>
                     
+                    {metrics.pieData.length > 0 && (
+                      <>
+                        <div className="h-[200px] w-full mb-6 flex items-center justify-center relative">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={metrics.pieData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={60}
+                                outerRadius={80}
+                                paddingAngle={5}
+                                dataKey="value"
+                                stroke="none"
+                              >
+                                {metrics.pieData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                              </Pie>
+                              <Tooltip 
+                                contentStyle={{ backgroundColor: '#1F2937', borderColor: '#374151', borderRadius: '12px', color: '#fff', fontSize: '12px', fontWeight: 'bold' }}
+                                itemStyle={{ color: '#fff' }}
+                                formatter={(value: number) => `R$ ${value.toFixed(2)}`}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex items-center justify-center flex-col pointer-events-none">
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Receita Bruta</span>
+                              <span className="text-sm font-bold dark:text-white">R$ {metrics.totalRevenue.toFixed(0)}</span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex flex-wrap justify-center gap-3 mb-6">
+                          {metrics.pieData.map((entry, idx) => (
+                             <div key={idx} className="flex items-center gap-1.5 text-[10px] font-bold text-gray-600 dark:text-gray-400">
+                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: entry.color }}></span>
+                                {entry.name}
+                             </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+
                     <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden shadow-sm">
                       {/* Top Bar - Resumo Liquido */}
                       <div className="p-5 bg-gradient-to-r from-green-600/20 to-green-600/10 border-b border-gray-800">
@@ -5043,7 +5256,7 @@ Exemplo de retorno:
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 px-2 sm:px-6 py-3 flex justify-between items-center z-40 shadow-2xl transition-colors">
+      <nav className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800 px-2 sm:px-6 pt-3 flex justify-between items-center z-40 shadow-[0_-10px_30px_rgba(0,0,0,0.05)] transition-colors pb-safe">
         <NavButton active={activeTab === 'operation'} onClick={() => setActiveTab('operation')} icon={Play} label="Turno" />
         <NavButton active={activeTab === 'history'} onClick={() => setActiveTab('history')} icon={History} label="Histórico" />
         <NavButton active={activeTab === 'wallet'} onClick={() => setActiveTab('wallet')} icon={Wallet} label="Meu Caixa" />
@@ -5658,7 +5871,7 @@ function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose:
       >
         <div className="w-12 h-1.5 shrink-0 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-6 sm:hidden" />
         <h3 className="text-2xl shrink-0 font-bold mb-6 tracking-tight dark:text-white">{title}</h3>
-        <div className="overflow-y-auto -mx-2 px-2 pb-2">
+        <div className="overflow-y-auto -mx-2 px-2 pb-safe">
           {children}
         </div>
       </motion.div>
