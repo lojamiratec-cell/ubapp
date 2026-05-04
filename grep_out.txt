@@ -1,0 +1,60 @@
+42:const ensureDate = (timestamp: any): Date => {
+213:  const shiftStartMs = activeShift?.startTime ? ensureDate(activeShift.startTime).getTime() : Date.now();
+225:      const tripEndMs = trip.timestamp ? ensureDate(trip.timestamp).getTime() : 
+226:                        (trip.startTime ? ensureDate(trip.startTime).getTime() : Date.now());
+508:      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
+510:      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
+522:      const date = ensureDate(shift.startTime);
+591:      const currentShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
+595:      const prevShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), prevWeekDate, { weekStartsOn: 1 }));
+602:        const wShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), wDate, { weekStartsOn: 1 }));
+617:      const currentShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
+621:      const prevShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), prevMonthDate));
+628:        const mShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), mDate));
+676:      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+678:      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+680:      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
+1008:        const d = ensureDate(s.startTime);
+1020:        data: format(ensureDate(s.startTime), 'dd/MM/yyyy'),
+1021:        horario: `${format(ensureDate(s.startTime), 'HH:mm')} - ${s.endTime ? format(ensureDate(s.endTime), 'HH:mm') : 'Em andamento'}`,
+1325:      lastChanged = ensureDate(activeShift.stateLastChangedAt);
+1327:      lastChanged = ensureDate(activeShift.lastStartedAt);
+2046:        .sort((a, b) => (ensureDate(b.startTime).getTime()) - (ensureDate(a.startTime).getTime()))
+2418:      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+2420:      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+2422:      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
+2431:       const startHour = ensureDate(s.startTime).getHours();
+2432:       const endHour = s.endTime ? ensureDate(s.endTime).getHours() : startHour;
+2505:    const recentShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= startDate && ensureDate(s.startTime) <= endDate);
+2510:       const stDate = ensureDate(s.startTime);
+2605:    const finished = shifts.filter(s => s.status === 'finished' && isSameMonth(ensureDate(s.startTime), now));
+2628:      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+2635:            const h = ensureDate(t.startTime || t.timestamp).getHours();
+2646:           const h = ensureDate(s.startTime).getHours();
+2658:        filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+2660:        filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
+2664:         const dStr = format(ensureDate(s.startTime), 'dd/MM');
+2711:    const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
+2755:        const dayStr = format(ensureDate(shift.startTime), 'dd/MM');
+2787:        const hour = ensureDate(t.startTime || t.timestamp).getHours();
+2809:        const day = ensureDate(t.startTime || t.timestamp).getDay(); 
+2878:    else if (activeShift.lastStartedAt) lastStarted = ensureDate(activeShift.lastStartedAt);
+2879:    else lastStarted = ensureDate(activeShift.startTime);
+2883:    else if (activeShift.stateLastChangedAt) lastStateChanged = ensureDate(activeShift.stateLastChangedAt);
+2914:      const shiftDate = ensureDate(s.startTime);
+2920:    const allTodayShifts = activeShift && isSameDay(ensureDate(activeShift.startTime), now) 
+2928:    const sortedTodayShifts = [...allTodayShifts].sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
+3003:      const d = ensureDate(s.startTime);
+3012:    const thisMonthExpenses = expenses.filter(e => isWithinInterval(ensureDate(e.date), { start: startOfM, end: endOfM }));
+3028:    const last30Shifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= thirtyDaysAgo);
+3101:      const d = ensureDate(s.startTime);
+3854:                                          {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
+4001:                                                const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
+4409:                             <p className="text-xs font-medium text-gray-400 dark:text-gray-500 mt-0.5">{format(ensureDate(w.date), 'dd/MM/yyyy • HH:mm')}</p>
+5225:                                  <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+5246:                                  <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+5269:                                    <span className="text-[11px] font-bold text-gray-500">{format(ensureDate(s.startTime), 'dd/MM')}</span>
+5399:                  const d = e.date ? ensureDate(e.date) : new Date();
+5406:                  const d = e.date ? ensureDate(e.date) : new Date();
+5415:                         <p className="text-[10px] text-gray-500 font-medium">{format(ensureDate(e.date), "dd/MM/yyyy")}</p>
+6526:         setTimeStr(trip.startTime ? format(ensureDate(trip.startTime), "HH:mm") : (trip.timestamp ? format(ensureDate(trip.timestamp), "HH:mm") : ""));

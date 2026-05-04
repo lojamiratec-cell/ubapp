@@ -24,7 +24,7 @@ import {
 import { 
   collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch, increment
 } from 'firebase/firestore';
-import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
+import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addDays, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { 
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell, PieChart, Pie
@@ -418,9 +418,9 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'operation' | 'history' | 'wallet' | 'insights' | 'settings'>('operation');
-  const [historyFilter, setHistoryFilter] = useState<'week' | 'month'>('week');
+  const [periodFilter, setPeriodFilter] = useState<'day' | 'week' | 'month'>('week');
   const [historyPendingOnly, setHistoryPendingOnly] = useState(false);
-  const [historyReferenceDate, setHistoryReferenceDate] = useState(new Date());
+  const [referenceDate, setReferenceDate] = useState(new Date());
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -504,10 +504,12 @@ export default function App() {
     const groups: Record<string, { date: Date, shifts: Shift[], totalRevenue: number, totalTime: number, totalWorkKm: number }> = {};
     
     let filteredShifts = shifts;
-    if (historyFilter === 'week') {
-      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), historyReferenceDate, { weekStartsOn: 1 }));
-    } else if (historyFilter === 'month') {
-      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), historyReferenceDate));
+    if (periodFilter === 'day') {
+      filteredShifts = shifts.filter(s => isSameDay(ensureDate(s.startTime), referenceDate));
+    } else if (periodFilter === 'week') {
+      filteredShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
+    } else if (periodFilter === 'month') {
+      filteredShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
     }
 
     if (historyPendingOnly) {
@@ -530,31 +532,32 @@ export default function App() {
       groups[dateKey].totalWorkKm += (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm));
     });
     return Object.values(groups).sort((a, b) => b.date.getTime() - a.date.getTime());
-  }, [shifts, historyFilter, historyReferenceDate, historyPendingOnly, shiftTrips]);
+  }, [shifts, periodFilter, referenceDate, historyPendingOnly, shiftTrips]);
 
-  const historyRangeLabel = useMemo(() => {
-    if (historyFilter === 'week') {
-      const start = startOfWeek(historyReferenceDate, { weekStartsOn: 1 });
-      const end = endOfWeek(historyReferenceDate, { weekStartsOn: 1 });
-      return { 
-        type: 'Semana', 
-        label: `${format(start, 'dd/MM')} - ${format(end, 'dd/MM')}`
-      };
+  const periodRangeLabel = useMemo(() => {
+    if (periodFilter === 'day') {
+      if (isSameDay(referenceDate, new Date())) return { type: 'Dia', label: 'Hoje' };
+      return { type: 'Dia', label: format(referenceDate, 'dd/MM/yyyy') };
+    } else if (periodFilter === 'week') {
+      const start = startOfWeek(referenceDate, { weekStartsOn: 1 });
+      const end = endOfWeek(referenceDate, { weekStartsOn: 1 });
+      if (isSameWeek(referenceDate, new Date(), { weekStartsOn: 1 })) return { type: 'Semana', label: 'Nesta Semana' };
+      return { type: 'Semana', label: `${format(start, 'dd/MM')} - ${format(end, 'dd/MM')}` };
     }
-    return {
-      type: 'Mês',
-      label: format(historyReferenceDate, 'MMMM yyyy', { locale: ptBR })
-    };
-  }, [historyFilter, historyReferenceDate]);
+    if (isSameMonth(referenceDate, new Date())) return { type: 'Mês', label: 'Neste Mês' };
+    return { type: 'Mês', label: format(referenceDate, 'MMMM yyyy', { locale: ptBR }) };
+  }, [periodFilter, referenceDate]);
 
-  const prevHistoryRange = () => {
-    if (historyFilter === 'week') setHistoryReferenceDate(prev => subWeeks(prev, 1));
-    else if (historyFilter === 'month') setHistoryReferenceDate(prev => subMonths(prev, 1));
+  const prevPeriodRange = () => {
+    if (periodFilter === 'day') setReferenceDate(prev => subDays(prev, 1));
+    else if (periodFilter === 'week') setReferenceDate(prev => subWeeks(prev, 1));
+    else if (periodFilter === 'month') setReferenceDate(prev => subMonths(prev, 1));
   };
   
-  const nextHistoryRange = () => {
-    if (historyFilter === 'week') setHistoryReferenceDate(prev => addWeeks(prev, 1));
-    else if (historyFilter === 'month') setHistoryReferenceDate(prev => addMonths(prev, 1));
+  const nextPeriodRange = () => {
+    if (periodFilter === 'day') setReferenceDate(prev => addDays(prev, 1));
+    else if (periodFilter === 'week') setReferenceDate(prev => addWeeks(prev, 1));
+    else if (periodFilter === 'month') setReferenceDate(prev => addMonths(prev, 1));
   };
 
   const historySummary = useMemo(() => {
@@ -587,18 +590,18 @@ export default function App() {
     let current, previous, average;
     let labelPrev = '', labelAvg = '';
 
-    if (historyFilter === 'week') {
-      const currentShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), historyReferenceDate, { weekStartsOn: 1 }));
+    if (periodFilter === 'week') {
+      const currentShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
       current = aggregateShifts(currentShifts);
 
-      const prevWeekDate = subWeeks(historyReferenceDate, 1);
+      const prevWeekDate = subWeeks(referenceDate, 1);
       const prevShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), prevWeekDate, { weekStartsOn: 1 }));
       previous = aggregateShifts(prevShifts);
       labelPrev = 'Sema. Passada';
 
       let past4Rev = 0, past4Time = 0, past4Km = 0;
       for(let i=1; i<=4; i++) {
-        const wDate = subWeeks(historyReferenceDate, i);
+        const wDate = subWeeks(referenceDate, i);
         const wShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), wDate, { weekStartsOn: 1 }));
         const agg = aggregateShifts(wShifts);
         past4Rev += agg.revenue;
@@ -614,17 +617,17 @@ export default function App() {
       };
       labelAvg = 'Média das 4S Anteriores';
     } else {
-      const currentShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), historyReferenceDate));
+      const currentShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
       current = aggregateShifts(currentShifts);
 
-      const prevMonthDate = subMonths(historyReferenceDate, 1);
+      const prevMonthDate = subMonths(referenceDate, 1);
       const prevShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), prevMonthDate));
       previous = aggregateShifts(prevShifts);
       labelPrev = 'Mês Passado';
 
       let past3Rev = 0, past3Time = 0, past3Km = 0;
       for(let i=1; i<=3; i++) {
-        const mDate = subMonths(historyReferenceDate, i);
+        const mDate = subMonths(referenceDate, i);
         const mShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), mDate));
         const agg = aggregateShifts(mShifts);
         past3Rev += agg.revenue;
@@ -642,7 +645,7 @@ export default function App() {
     }
 
     return { current, previous, average, labelPrev, labelAvg };
-  }, [shifts, historyFilter, historyReferenceDate]);
+  }, [shifts, periodFilter, referenceDate]);
 
   const toggleDay = (dateKey: string) => {
     setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
@@ -651,36 +654,61 @@ export default function App() {
   // AI State
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [insightFilter, setInsightFilter] = useState<'day' | 'week' | 'month'>('month');
-  const [insightReferenceDate, setInsightReferenceDate] = useState(new Date());
+      const [isLoadingInsights, setIsLoadingInsights] = useState(false);
 
-  const insightRangeLabel = useMemo(() => {
-    if (insightFilter === 'day') {
-      if (isSameDay(insightReferenceDate, new Date())) return { type: 'Dia', label: 'Hoje' };
-      return { type: 'Dia', label: format(insightReferenceDate, 'dd/MM/yyyy') };
-    } else if (insightFilter === 'week') {
-      const start = startOfWeek(insightReferenceDate, { weekStartsOn: 1 });
-      const end = endOfWeek(insightReferenceDate, { weekStartsOn: 1 });
-      if (isSameWeek(insightReferenceDate, new Date(), { weekStartsOn: 1 })) return { type: 'Semana', label: 'Nesta Semana' };
-      return { type: 'Semana', label: `${format(start, 'dd/MM')} - ${format(end, 'dd/MM')}` };
+    useEffect(() => {
+    if (!user) return;
+
+    const targetDate = referenceDate;
+    const filteredShiftsForLoading = shifts.filter(s => s.status === 'finished');
+    let scopeShifts: typeof shifts = [];
+
+    if (periodFilter === 'day') {
+      scopeShifts = filteredShiftsForLoading.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+    } else if (periodFilter === 'week') {
+      scopeShifts = filteredShiftsForLoading.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+    } else if (periodFilter === 'month') {
+      scopeShifts = filteredShiftsForLoading.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
     }
-    if (isSameMonth(insightReferenceDate, new Date())) return { type: 'Mês', label: 'Neste Mês' };
-    return { type: 'Mês', label: format(insightReferenceDate, 'MMMM yyyy', { locale: ptBR }) };
-  }, [insightFilter, insightReferenceDate]);
 
-  const prevInsightRange = () => {
-    if (insightFilter === 'day') setInsightReferenceDate(prev => subDays(prev, 1));
-    else if (insightFilter === 'week') setInsightReferenceDate(prev => subWeeks(prev, 1));
-    else if (insightFilter === 'month') setInsightReferenceDate(prev => subMonths(prev, 1));
-  };
-  
-  const nextInsightRange = () => {
-    if (insightFilter === 'day') setInsightReferenceDate(prev => addDays(prev, 1));
-    else if (insightFilter === 'week') setInsightReferenceDate(prev => addWeeks(prev, 1));
-    else if (insightFilter === 'month') setInsightReferenceDate(prev => addMonths(prev, 1));
-  };
+    const missingShifts = scopeShifts.filter(s => s.totalTrips > 0 && !shiftTrips[s.id]);
+    
+    if (missingShifts.length > 0) {
+      setIsLoadingInsights(true);
+      
+      const fetchMissing = async () => {
+        try {
+          const newTripsObj: Record<string, Trip[]> = {};
+          let changed = false;
 
-  useEffect(() => {
+          await Promise.all(missingShifts.map(async (shift) => {
+            const q = query(
+              collection(db, 'shifts', shift.id, 'trips'),
+              where('userId', '==', user.uid)
+            );
+            const snap = await getDocs(q);
+            newTripsObj[shift.id] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trip));
+            changed = true;
+          }));
+
+          if (changed) {
+            setShiftTrips(prev => ({ ...prev, ...newTripsObj }));
+          }
+        } catch (e) {
+          console.error("Failed to load insights trips", e);
+        } finally {
+          setIsLoadingInsights(false);
+        }
+      };
+
+      fetchMissing();
+    } else {
+      setIsLoadingInsights(false);
+    }
+  }, [periodFilter, referenceDate, shifts, user]);
+
+    
+    useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
       localStorage.setItem('theme', 'dark');
@@ -790,7 +818,7 @@ export default function App() {
     if (activeShift && activeShift.status === 'active') {
       interval = setInterval(() => {
         const now = new Date();
-        const lastStarted = activeShift.lastStartedAt?.toDate() || new Date();
+        const lastStarted = ensureDate(activeShift.lastStartedAt);
         const diff = differenceInSeconds(now, lastStarted);
         setElapsedTime(activeShift.activeTimeSeconds + diff);
       }, 1000);
@@ -1114,9 +1142,9 @@ REGRAS CRÍTICAS:
 
       shifts.forEach(s => {
         const shiftId = s.id;
-        const shiftDate = format(s.startTime?.toDate() || new Date(), 'dd/MM/yyyy');
-        const shiftStart = format(s.startTime?.toDate() || new Date(), 'HH:mm');
-        const shiftEnd = s.endTime ? format((s.endTime?.toDate() || new Date()), 'HH:mm') : '--';
+        const shiftDate = format(ensureDate(s.startTime), 'dd/MM/yyyy');
+        const shiftStart = format(ensureDate(s.startTime), 'HH:mm');
+        const shiftEnd = s.endTime ? format(ensureDate(s.endTime), 'HH:mm') : '--';
         const shiftRev = s.totalRevenue.toFixed(2);
         const shiftTime = formatTime(s.activeTimeSeconds);
         const shiftStartKm = s.startKm.toString();
@@ -1126,7 +1154,7 @@ REGRAS CRÍTICAS:
         const shiftCons = s.avgConsumption?.toFixed(1) || '--';
         const totalTripsStr = s.totalTrips.toString();
         
-        const totalRawSecs = s.endTime ? differenceInSeconds(s.endTime.toDate(), s.startTime?.toDate() || new Date()) : 0;
+        const totalRawSecs = s.endTime ? differenceInSeconds(ensureDate(s.endTime), ensureDate(s.startTime)) : 0;
         const wastedSecs = Math.max(0, totalRawSecs - s.activeTimeSeconds);
         const wastedStr = formatTime(wastedSecs);
 
@@ -1152,8 +1180,8 @@ REGRAS CRÍTICAS:
               shiftStartKm, shiftEndKm, shiftWorkKm, shiftPersonalKm, shiftCons, totalTripsStr, wastedStr,
               '', // separator
               t.id, isCancelled, t.value.toFixed(2), dynamicVal,
-              format(t.timestamp?.toDate() || new Date(), 'dd/MM/yyyy'),
-              format(t.timestamp?.toDate() || t.startTime?.toDate() || new Date(), 'HH:mm'),
+              format(ensureDate(t.timestamp), 'dd/MM/yyyy'),
+              format(ensureDate(t.timestamp), 'HH:mm'),
               mins, t.durationSeconds.toString(), (t.distanceKm || 0).toFixed(1), rph, rpkm
             ]);
           });
@@ -1186,7 +1214,7 @@ REGRAS CRÍTICAS:
     
     const expenseRows = expenses.map(e => [
       'Despesa',
-      format(e.date?.toDate() || new Date(), 'dd/MM/yyyy'),
+      format(ensureDate(e.date), 'dd/MM/yyyy'),
       e.category,
       e.value.toFixed(2),
       e.kmAtExpense,
@@ -1195,7 +1223,7 @@ REGRAS CRÍTICAS:
 
     const fuelRows = fuelRecords.map(f => [
       'Combustível',
-      format(f.date?.toDate() || new Date(), 'dd/MM/yyyy'),
+      format(ensureDate(f.date), 'dd/MM/yyyy'),
       'Abastecimento',
       f.totalValue.toFixed(2),
       f.km,
@@ -1331,7 +1359,7 @@ REGRAS CRÍTICAS:
       
       let lastStarted: Date;
       if (activeShift.lastStartedAt === null) lastStarted = now;
-      else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
+      else if (activeShift.lastStartedAt) lastStarted = ensureDate(activeShift.lastStartedAt);
       else lastStarted = now;
       
       const diffTime = Math.max(0, differenceInSeconds(now, lastStarted));
@@ -1342,7 +1370,7 @@ REGRAS CRÍTICAS:
 
       let lastStateChanged: Date;
       if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
-      else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+      else if (activeShift.stateLastChangedAt) lastStateChanged = ensureDate(activeShift.stateLastChangedAt);
       else lastStateChanged = lastStarted;
       
       const diffStateTime = Math.max(0, differenceInSeconds(now, lastStateChanged));
@@ -1482,7 +1510,7 @@ REGRAS CRÍTICAS:
       if (activeShift.status === 'active') {
         let lastStarted: Date;
         if (activeShift.lastStartedAt === null) lastStarted = now;
-        else if (activeShift.lastStartedAt) lastStarted = activeShift.lastStartedAt.toDate();
+        else if (activeShift.lastStartedAt) lastStarted = ensureDate(activeShift.lastStartedAt);
         else lastStarted = now;
         
         finalActiveTime += Math.max(0, differenceInSeconds(now, lastStarted));
@@ -1490,7 +1518,7 @@ REGRAS CRÍTICAS:
 
         let lastStateChanged: Date;
         if (activeShift.stateLastChangedAt === null) lastStateChanged = now;
-        else if (activeShift.stateLastChangedAt) lastStateChanged = activeShift.stateLastChangedAt.toDate();
+        else if (activeShift.stateLastChangedAt) lastStateChanged = ensureDate(activeShift.stateLastChangedAt);
         else lastStateChanged = lastStarted;
         
         const diffStateTime = Math.max(0, differenceInSeconds(now, lastStateChanged));
@@ -1679,7 +1707,7 @@ REGRAS CRÍTICAS:
       const activeTime = activeSecs !== undefined ? activeSecs : Math.max(0, differenceInSeconds(end, start));
       const workKm = Math.max(0, endKm - startKm);
       
-      const previousShift = shifts.find(s => s.endTime && (s.endTime?.toDate() || new Date()) < start);
+      const previousShift = shifts.find(s => s.endTime && ensureDate(s.endTime) < start);
       const prevKm = previousShift ? (previousShift.endKm || previousShift.lastKm || previousShift.startKm) : 0;
       const personalKm = prevKm > 0 && startKm > prevKm ? startKm - prevKm : 0;
 
@@ -1837,10 +1865,10 @@ REGRAS CRÍTICAS:
       if (data.activeTimeSeconds !== undefined) {
         updates.activeTimeSeconds = data.activeTimeSeconds;
       } else if (data.startTime && data.endTime) {
-        const oldStartTime = existing.startTime?.toDate() || new Date();
-        const oldEndTime = existing.endTime?.toDate() || new Date();
-        const newStartTime = data.startTime instanceof Timestamp ? data.startTime.toDate() : new Date();
-        const newEndTime = data.endTime instanceof Timestamp ? data.endTime.toDate() : new Date();
+        const oldStartTime = ensureDate(existing.startTime);
+        const oldEndTime = ensureDate(existing.endTime);
+        const newStartTime = data.startTime instanceof Timestamp ? ensureDate(data.startTime) : new Date();
+        const newEndTime = data.endTime instanceof Timestamp ? ensureDate(data.endTime) : new Date();
         
         const oldTotalDuration = differenceInSeconds(oldEndTime, oldStartTime);
         const newTotalDuration = Math.max(0, differenceInSeconds(newEndTime, newStartTime));
@@ -1987,14 +2015,14 @@ REGRAS CRÍTICAS:
 
       const viagensPorHora = metrics.totalHours > 0 ? (metrics.totalTrips / metrics.totalHours).toFixed(2) : '0.00';
 
-      const targetDate = insightReferenceDate;
-      let filteredShiftsForAi = shifts.filter(s => s.status === 'finished');
-      if (insightFilter === 'day') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameDay((s.startTime?.toDate() || new Date()), targetDate));
-      } else if (insightFilter === 'week') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
-      } else if (insightFilter === 'month') {
-        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), targetDate));
+    const targetDate = referenceDate;
+    let filteredShiftsForAi = shifts;
+    if (periodFilter === 'day') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+      } else if (periodFilter === 'week') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+      } else if (periodFilter === 'month') {
+        filteredShiftsForAi = filteredShiftsForAi.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
       }
 
       const recentShifts = filteredShiftsForAi
@@ -2005,17 +2033,31 @@ REGRAS CRÍTICAS:
         const duration = s.activeTimeSeconds / 3600;
         const rph = duration > 0 ? s.totalRevenue / duration : 0;
         const rpkm = s.totalWorkKm > 0 ? s.totalRevenue / s.totalWorkKm : 0;
-        const date = format((s.startTime?.toDate() || new Date()), 'dd/MM HH:mm');
+        const date = format(ensureDate(s.startTime), 'dd/MM HH:mm');
         return `[${date}] R$${s.totalRevenue.toFixed(2)} | ${duration.toFixed(1)}h | ${s.totalWorkKm.toFixed(1)}km | ${s.totalTrips} viagens | R$/h: ${rph.toFixed(2)} | R$/km: ${rpkm.toFixed(2)}`;
       }).join('\n');
 
-      const filterDescription = insightFilter === 'day' ? 'Hoje' : insightFilter === 'week' ? 'Nesta Semana' : 'Neste Mês';
+      const filterDescription = periodFilter === 'day' 
+        ? (isSameDay(referenceDate, new Date()) ? 'Hoje' : format(referenceDate, 'dd/MM')) 
+        : periodFilter === 'week' 
+          ? (isSameWeek(referenceDate, new Date(), { weekStartsOn: 1 }) ? 'Nesta Semana' : 'Dessa Semana')
+          : (isSameMonth(referenceDate, new Date()) ? 'Neste Mês' : format(referenceDate, 'MMMM', { locale: ptBR }));
+
+      const allTimeContext = allTimeMetrics ? `
+        --- MÉDIAS HISTÓRICAS (GERAL - TODA A CONTA) ---
+        - R$/Hora Médio Geral: R$ ${allTimeMetrics.revenuePerHour.toFixed(2)}
+        - R$/KM Médio Geral: R$ ${allTimeMetrics.revenuePerKm.toFixed(2)}
+        - Ticket Médio Geral: R$ ${allTimeMetrics.ticketMedio.toFixed(2)}
+        - Total de Turnos: ${shifts.filter(s => s.status === 'finished').length}
+      ` : '';
 
       const prompt = `
         Atue como um Cientista de Dados e Conselheiro Estratégico de Alta Performance para motoristas de app, focado em otimização agressiva de lucros (Maximizando R$/KM e R$/Hora).
         Analise os seguintes dados recentes (${filterDescription} / até 100 turnos):
         
-        RESUMO GERAL DOS DADOS HISTÓRICOS:
+        ${allTimeContext}
+
+        RESUMO DO PERÍODO SELECIONADO (${filterDescription}):
         - Faturamento Total: R$ ${metrics.totalRevenue.toFixed(2)}
         - KM Rodados (Trabalho): ${metrics.totalKmWork.toFixed(2)} km
         - Tempo Total Ativo: ${metrics.totalHours.toFixed(2)} horas
@@ -2024,21 +2066,19 @@ REGRAS CRÍTICAS:
         - Viagens/Hora: ${viagensPorHora}
         - R$/KM Médio: R$ ${metrics.revenuePerKm.toFixed(2)}
         - Ticket Médio: R$ ${metrics.ticketMedio.toFixed(2)}
-
-        RECEITA EXTRA (ANÁLISE DE CUSTO-BENEFÍCIO):
         - Faturamento com Dinâmico: R$ ${metrics.totalDynamicValue.toFixed(2)}
         - Ganhos com Taxas de Cancelamento: R$ ${metrics.totalCancelledValue.toFixed(2)} (${metrics.totalCancelledTrips} canceladas)
         - Melhor Dia P/ Trabalho: ${metrics.bestDayInfo.day !== -1 ? ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'][metrics.bestDayInfo.day] : 'N/A'} (R$ ${metrics.bestDayInfo.rph.toFixed(2)}/h)
         - Melhor Horário P/ Trabalho: ${metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour}:00` : 'N/A'} (R$ ${metrics.bestHourInfo.rph.toFixed(2)}/h)
         
-        DADOS DIÁRIOS/TURNOS E CORRIDAS:
+        DADOS DIÁRIOS/TURNOS DO PERÍODO:
         ${shiftsDataForAI}
         
         SUA TAREFA - FORNEÇA UM RELATÓRIO ESTRUTURADO NESTES 3 PILARES:
 
-        1. 🔍 DIAGNÓSTICO E RECEITA EXTRA: Qual o padrão atual de corridas? Fale sobre o ticket médio e pontue se o motorista está ou não tirando bom proveito de Dinâmicos e Cancelamentos para aumentar o lucro líquido.
-        2. 🏆 META IDEAL (OS MELHORES 20%): Encontre os 20% melhores turnos nesse histórico. Quais foram os valores de R$/KM, R$/Hora e ticket médio nesses dias de pico? Defina esses números agressivamente como o NOVO PADRÃO IDEAL diário.
-        3. ⚡ PLANO DE AÇÃO TÁTICO: Dê 3 diretrizes pragmáticas baseadas nos dias analisados (ex: "As corridas precisam pagar mais de R$ 2,20/km. Busque dinâmicos nas manhãs de Segunda."). Identifique os períodos mais e menos lucrativos.
+        1. 🔍 DIAGNÓSTICO E COMPARAÇÃO: Analise o desempenho do período selecionado em relação às médias históricas gerais. O motorista está acima ou abaixo da sua média habitual? Fale sobre o ticket médio e pontue se o motorista está ou não tirando bom proveito de Dinâmicos e Cancelamentos.
+        2. 🏆 META IDEAL (OS MELHORES 20%): Encontre os 20% melhores turnos nesse histórico recente. Quais foram os valores de R$/KM, R$/Hora e ticket médio nesses dias de pico? Defina esses números agressivamente como o NOVO PADRÃO IDEAL diário.
+        3. ⚡ PLANO DE AÇÃO TÁTICO: Dê 3 diretrizes pragmáticas baseadas nos dias analisados para que o motorista atinja os melhores resultados de todos os tempos. Identifique os períodos mais e menos lucrativos.
 
         REGRAS IMPORTANTES:
         - A resposta DEVE ter NO MÁXIMO 1500 caracteres, mas precisa ser densa, inteligente e baseada rigidamente nos dados acima.
@@ -2154,11 +2194,11 @@ REGRAS CRÍTICAS:
       const thrityDaysAgo = subMonths(now, 1);
       const allHistoricalTrips = Object.values(shiftTrips)
         .flat()
-        .filter(t => t.startTime && t.startTime.toDate() >= thrityDaysAgo);
+        .filter(t => t.startTime && ensureDate(t.startTime) >= thrityDaysAgo);
 
       // Helper to calculate average R$/h for a specific hour across history
       const getStatsForHour = (targetHour: number) => {
-        const tripsInHour = allHistoricalTrips.filter(t => t.startTime!.toDate().getHours() === targetHour);
+        const tripsInHour = allHistoricalTrips.filter(t => ensureDate(t.startTime).getHours() === targetHour);
         const totalValue = tripsInHour.reduce((acc, t) => acc + t.value, 0);
         const totalDurationSecs = tripsInHour.reduce((acc, t) => acc + t.durationSeconds, 0);
         const totalDistance = tripsInHour.reduce((acc, t) => acc + (t.distanceKm || 0), 0);
@@ -2230,8 +2270,8 @@ Exemplo de retorno:
 
   const monthlySummary = useMemo(() => {
     const now = new Date();
-    const currentMonthShifts = shifts.filter(s => s.status === 'finished' && isSameMonth((s.startTime?.toDate() || new Date()), now));
-    const lastMonthShifts = shifts.filter(s => s.status === 'finished' && isSameMonth((s.startTime?.toDate() || new Date()), subMonths(now, 1)));
+    const currentMonthShifts = shifts.filter(s => s.status === 'finished' && isSameMonth(ensureDate(s.startTime), now));
+    const lastMonthShifts = shifts.filter(s => s.status === 'finished' && isSameMonth(ensureDate(s.startTime), subMonths(now, 1)));
 
     const currentRevenue = currentMonthShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
     const lastRevenue = lastMonthShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
@@ -2317,7 +2357,7 @@ Exemplo de retorno:
     const hoursByDay = new Array(7).fill(0);
     
     shifts.filter(s => s.status === 'finished').forEach(s => {
-      const day = (s.startTime?.toDate() || new Date()).getDay();
+      const day = ensureDate(s.startTime).getDay();
       revenueByDay[day] += s.totalRevenue;
       countByDay[day] += 1;
       hoursByDay[day] += s.activeTimeSeconds / 3600;
@@ -2335,13 +2375,13 @@ Exemplo de retorno:
     const hours = new Array(24).fill(0).map(() => ({ revenue: 0, count: 0, seconds: 0 }));
     
     shifts.filter(s => s.status === 'finished').forEach(s => {
-      const startHour = (s.startTime?.toDate() || new Date()).getHours();
-      const endHour = s.endTime ? (s.endTime?.toDate() || new Date()).getHours() : startHour;
+      const startHour = ensureDate(s.startTime).getHours();
+      const endHour = s.endTime ? ensureDate(s.endTime).getHours() : startHour;
       const revenue = s.totalRevenue;
       const activeSeconds = s.activeTimeSeconds;
       
       // If shift is within the same day, distribute evenly
-      if (s.endTime && (s.startTime?.toDate() || new Date()).getDate() === (s.endTime?.toDate() || new Date()).getDate()) {
+      if (s.endTime && ensureDate(s.startTime).getDate() === ensureDate(s.endTime).getDate()) {
          const durationHours = Math.max(1, endHour - startHour + 1);
          const revPerHour = revenue / durationHours;
          const secPerHour = activeSeconds / durationHours;
@@ -2367,13 +2407,13 @@ Exemplo de retorno:
   }, [shifts]);
 
   const hourlyData = useMemo(() => {
-    const targetDate = insightReferenceDate;
+    const targetDate = referenceDate;
     let filteredShifts = shifts.filter(s => s.status === 'finished');
-    if (insightFilter === 'day') {
+    if (periodFilter === 'day') {
       filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
-    } else if (insightFilter === 'week') {
+    } else if (periodFilter === 'week') {
       filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
-    } else if (insightFilter === 'month') {
+    } else if (periodFilter === 'month') {
       filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
     }
 
@@ -2438,15 +2478,25 @@ Exemplo de retorno:
        insightMsg
     };
 
-  }, [shifts, insightFilter]);
+  }, [shifts, periodFilter]);
 
   const consumptionTrendConfig = useMemo(() => {
-    const targetDate = insightReferenceDate;
-    const daysWindow = insightFilter === 'month' ? 30 : insightFilter === 'week' ? 7 : 1;
-    const startDate = subDays(startOfDay(targetDate), daysWindow - 1);
+    const targetDate = referenceDate;
     
-    // We only want data UP TO the targetDate to build the trend
-    const endDate = endOfDay(targetDate);
+    let startDate: Date;
+    let endDate: Date;
+    
+    if (periodFilter === 'month') {
+      startDate = startOfMonth(targetDate);
+      endDate = endOfMonth(targetDate);
+    } else if (periodFilter === 'week') {
+      startDate = startOfWeek(targetDate, { weekStartsOn: 1 });
+      endDate = endOfWeek(targetDate, { weekStartsOn: 1 });
+    } else {
+      startDate = startOfDay(targetDate);
+      endDate = endOfDay(targetDate);
+    }
+    
     const recentShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= startDate && ensureDate(s.startTime) <= endDate);
     const byDate: Record<string, { km: number, l: number }> = {};
     const resultArr: { date: string, kmL: number, millis: number }[] = [];
@@ -2509,7 +2559,7 @@ Exemplo de retorno:
        worstDate: worst.date,
        insightMsg
     };
-  }, [shifts, insightFilter, settings]);
+  }, [shifts, periodFilter, settings]);
 
   const tripProfile = useMemo(() => {
     const profile = {
@@ -2566,10 +2616,10 @@ Exemplo de retorno:
   }, [shifts]);
 
   const chartsData = useMemo(() => {
-    const targetDate = insightReferenceDate;
-    let filteredShifts = shifts.filter(s => s.status === 'finished');
+    const targetDate = referenceDate;
+    let filteredShifts = shifts;
     
-    if (insightFilter === 'day') {
+    if (periodFilter === 'day') {
       filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
       // For a single day, we might want to show revenue per hour
       const byHour: Record<string, number> = {};
@@ -2583,15 +2633,25 @@ Exemplo de retorno:
             byHour[hStr] += t.value;
          });
       });
-      // If no trips, use shift average
+      // If no trips, distribute shift revenue among active hours
       if (Object.keys(byHour).length === 0) {
         filteredShifts.forEach(s => {
-           const durationH = s.activeTimeSeconds / 3600;
-           const valPerH = durationH > 0 ? s.totalRevenue / durationH : s.totalRevenue;
-           const h = ensureDate(s.startTime).getHours();
-           const hStr = `${h.toString().padStart(2, '0')}:00`;
-           if (!byHour[hStr]) byHour[hStr] = 0;
-           byHour[hStr] += valPerH;
+           const startH = ensureDate(s.startTime).getHours();
+           const endH = s.endTime ? ensureDate(s.endTime).getHours() : startH;
+           const durationH = Math.max(1, (s.activeTimeSeconds || 0) / 3600);
+           const valPerH = s.totalRevenue / durationH;
+           
+           if (startH <= endH) {
+             for (let h = startH; h <= endH; h++) {
+               const hStr = `${h.toString().padStart(2, '0')}:00`;
+               if (!byHour[hStr]) byHour[hStr] = 0;
+               byHour[hStr] += valPerH;
+             }
+           } else {
+             const hStr = `${startH.toString().padStart(2, '0')}:00`;
+             if (!byHour[hStr]) byHour[hStr] = 0;
+             byHour[hStr] += s.totalRevenue;
+           }
         });
       }
       return {
@@ -2599,9 +2659,9 @@ Exemplo de retorno:
         pieData: [] // Calculated below using metrics
       };
     } else {
-      if (insightFilter === 'week') {
+      if (periodFilter === 'week') {
         filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
-      } else if (insightFilter === 'month') {
+      } else if (periodFilter === 'month') {
         filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
       }
       const byDay: Record<string, number> = {};
@@ -2623,26 +2683,46 @@ Exemplo de retorno:
         pieData: []
       };
     }
-  }, [shifts, shiftTrips, insightFilter, insightReferenceDate]);
+  }, [shifts, shiftTrips, periodFilter, referenceDate]);
+
+  const allTimeMetrics = useMemo(() => {
+    const finished = shifts.filter(s => s.status === 'finished');
+    if (finished.length === 0) return null;
+
+    const totalRevenue = finished.reduce((acc, s) => acc + s.totalRevenue, 0);
+    const totalKm = finished.reduce((acc, s) => acc + (s.totalWorkKm || ((s.endKm || 0) - s.startKm)), 0);
+    const totalSeconds = finished.reduce((acc, s) => acc + s.activeTimeSeconds, 0);
+    const totalTrips = finished.reduce((acc, s) => acc + s.totalTrips, 0);
+
+    return {
+      revenuePerHour: totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0,
+      revenuePerKm: totalKm > 0 ? totalRevenue / totalKm : 0,
+      ticketMedio: totalTrips > 0 ? totalRevenue / totalTrips : 0,
+      totalHours: totalSeconds / 3600,
+      totalKm,
+      totalTrips,
+      totalRevenue
+    };
+  }, [shifts]);
 
   const metrics = useMemo(() => {
-    const targetDate = insightReferenceDate;
-    let filteredShifts = shifts.filter(s => s.status === 'finished');
+    const targetDate = referenceDate;
+    let filteredShifts = shifts;
     let filteredExpenses = expenses;
     let filteredFuel = fuelRecords;
 
-    if (insightFilter === 'day') {
-      filteredShifts = filteredShifts.filter(s => isSameDay((s.startTime?.toDate() || new Date()), targetDate));
-      filteredExpenses = expenses.filter(e => isSameDay((e.date?.toDate() || new Date()), targetDate));
-      filteredFuel = fuelRecords.filter(f => isSameDay((f.date?.toDate() || new Date()), targetDate));
-    } else if (insightFilter === 'week') {
-      filteredShifts = filteredShifts.filter(s => isSameWeek((s.startTime?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
-      filteredExpenses = expenses.filter(e => isSameWeek((e.date?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
-      filteredFuel = fuelRecords.filter(f => isSameWeek((f.date?.toDate() || new Date()), targetDate, { weekStartsOn: 1 }));
-    } else if (insightFilter === 'month') {
-      filteredShifts = filteredShifts.filter(s => isSameMonth((s.startTime?.toDate() || new Date()), targetDate));
-      filteredExpenses = expenses.filter(e => isSameMonth((e.date?.toDate() || new Date()), targetDate));
-      filteredFuel = fuelRecords.filter(f => isSameMonth((f.date?.toDate() || new Date()), targetDate));
+    if (periodFilter === 'day') {
+      filteredShifts = filteredShifts.filter(s => isSameDay(ensureDate(s.startTime), targetDate));
+      filteredExpenses = expenses.filter(e => isSameDay(ensureDate(e.date), targetDate));
+      filteredFuel = fuelRecords.filter(f => isSameDay(ensureDate(f.date), targetDate));
+    } else if (periodFilter === 'week') {
+      filteredShifts = filteredShifts.filter(s => isSameWeek(ensureDate(s.startTime), targetDate, { weekStartsOn: 1 }));
+      filteredExpenses = expenses.filter(e => isSameWeek(ensureDate(e.date), targetDate, { weekStartsOn: 1 }));
+      filteredFuel = fuelRecords.filter(f => isSameWeek(ensureDate(f.date), targetDate, { weekStartsOn: 1 }));
+    } else if (periodFilter === 'month') {
+      filteredShifts = filteredShifts.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
+      filteredExpenses = expenses.filter(e => isSameMonth(ensureDate(e.date), targetDate));
+      filteredFuel = fuelRecords.filter(f => isSameMonth(ensureDate(f.date), targetDate));
     }
 
     if (filteredShifts.length === 0) return null;
@@ -2812,7 +2892,7 @@ Exemplo de retorno:
       shiftsMissingTrips,
       pieData
     };
-  }, [shifts, expenses, fuelRecords, insightFilter, settings, shiftTrips]);
+  }, [shifts, expenses, fuelRecords, periodFilter, settings, shiftTrips, referenceDate]);
 
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) return null;
@@ -2904,9 +2984,9 @@ Exemplo de retorno:
     const now = new Date();
     const thirtyDaysAgo = subDays(now, 30);
     
-    const last30DaysShifts = shifts.filter(s => s.status === 'finished' && (s.startTime?.toDate() || new Date()) >= thirtyDaysAgo);
-    const last30DaysExpenses = expenses.filter(e => (e.date?.toDate() || new Date()) >= thirtyDaysAgo);
-    const last30DaysFuel = fuelRecords.filter(f => (f.date?.toDate() || new Date()) >= thirtyDaysAgo);
+    const last30DaysShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= thirtyDaysAgo);
+    const last30DaysExpenses = expenses.filter(e => ensureDate(e.date) >= thirtyDaysAgo);
+    const last30DaysFuel = fuelRecords.filter(f => ensureDate(f.date) >= thirtyDaysAgo);
     
     const totalRevenue30Days = last30DaysShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
     const maintenancePercentage = settings?.maintenancePercentage ?? 10;
@@ -3076,15 +3156,15 @@ Exemplo de retorno:
 
     return finishedShifts.map(s => {
       const dayExpenses = expenses
-        .filter(e => format((e.date?.toDate() || new Date()), 'dd/MM') === format((s.startTime?.toDate() || new Date()), 'dd/MM'))
+        .filter(e => format(ensureDate(e.date), 'dd/MM') === format(ensureDate(s.startTime), 'dd/MM'))
         .reduce((acc, e) => acc + e.value, 0);
       
       const dayFuel = fuelRecords
-        .filter(f => format((f.date?.toDate() || new Date()), 'dd/MM') === format((s.startTime?.toDate() || new Date()), 'dd/MM'))
+        .filter(f => format(ensureDate(f.date), 'dd/MM') === format(ensureDate(s.startTime), 'dd/MM'))
         .reduce((acc, f) => acc + f.totalValue, 0);
 
       return {
-        date: format(s.startTime?.toDate() || new Date(), 'dd/MM'),
+        date: format(ensureDate(s.startTime), 'dd/MM'),
         revenue: s.totalRevenue,
         profit: s.totalRevenue - dayExpenses - dayFuel
       };
@@ -3613,23 +3693,30 @@ Exemplo de retorno:
                 
                 <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
                   <div className="flex bg-gray-100 dark:bg-gray-800/50 p-1.5 rounded-[20px] w-full sm:w-auto border border-gray-200/50 dark:border-gray-700/50">
-                    <button onClick={() => setHistoryFilter('week')} className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", historyFilter === 'week' ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}>Semana</button>
-                    <button onClick={() => setHistoryFilter('month')} className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", historyFilter === 'month' ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}>Mês</button>
+                    {(['day', 'week', 'month'] as const).map((f) => (
+                      <button 
+                        key={f}
+                        onClick={() => setPeriodFilter(f)} 
+                        className={cn("flex-1 py-3 px-6 text-xs uppercase tracking-widest font-black rounded-2xl transition-all duration-300", periodFilter === f ? "bg-white dark:bg-[#22C55E] text-gray-900 dark:text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200")}
+                      >
+                        {f === 'day' ? 'Dia' : f === 'week' ? 'Semana' : 'Mês'}
+                      </button>
+                    ))}
                   </div>
 
                   <div className="flex items-center justify-between sm:justify-start gap-4 bg-white dark:bg-gray-800/50 p-1.5 rounded-[20px] border border-gray-200/50 dark:border-gray-700/50 shadow-sm">
                       <button 
-                        onClick={prevHistoryRange}
+                        onClick={prevPeriodRange}
                         className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
                       >
                         <ChevronLeft size={18} />
                       </button>
                       <div className="text-center min-w-[140px]">
-                        <p className="text-[9px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">{historyRangeLabel.type}</p>
-                        <p className="text-xs font-bold text-gray-900 dark:text-gray-100 capitalize truncate">{historyRangeLabel.label}</p>
+                        <p className="text-[9px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">{periodRangeLabel.type}</p>
+                        <p className="text-xs font-bold text-gray-900 dark:text-gray-100 capitalize truncate">{periodRangeLabel.label}</p>
                       </div>
                       <button 
-                        onClick={nextHistoryRange}
+                        onClick={nextPeriodRange}
                         className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-xl text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
                       >
                         <ChevronRight size={18} />
@@ -4376,7 +4463,7 @@ Exemplo de retorno:
                           <div className="space-y-1">
                             <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {fuel.totalValue.toFixed(2)}</p>
                             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 flex flex-wrap gap-1.5">
-                              <span>{format(fuel.date?.toDate() || new Date(), 'dd/MM HH:mm')}</span>
+                              <span>{format(ensureDate(fuel.date), 'dd/MM HH:mm')}</span>
                               <span className="opacity-30">•</span>
                               <span>{fuel.liters.toFixed(2)}L</span>
                               <span className="opacity-30">•</span>
@@ -4424,7 +4511,7 @@ Exemplo de retorno:
                       <div>
                         <p className="font-bold text-sm text-gray-900 dark:text-white leading-tight">{expense.category}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 font-medium mt-0.5">
-                          {format(expense.date?.toDate() || new Date(), 'dd/MM/yyyy')} • <span className="text-red-500/80">{expense.kmAtExpense} km</span>
+                          {format(ensureDate(expense.date), 'dd/MM/yyyy')} • <span className="text-red-500/80">{expense.kmAtExpense} km</span>
                         </p>
                       </div>
                     </div>
@@ -4450,46 +4537,67 @@ Exemplo de retorno:
               exit={{ opacity: 0, x: 20 }}
               className="space-y-6"
             >
-              <div className="flex flex-col gap-3 bg-white dark:bg-gray-900 p-2 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors">
+              <div className="flex flex-col gap-3 bg-white dark:bg-gray-900 p-2 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm transition-colors relative overflow-hidden">
                 <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800/50 p-1 rounded-xl">
-                  {(['day', 'week', 'month'] as const).map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setInsightFilter(f)}
-                      className={cn(
-                        "flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all",
-                        insightFilter === f ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-                      )}
-                    >
-                      {f === 'day' ? 'Diário' : f === 'week' ? 'Semanal' : 'Mensal'}
-                    </button>
-                  ))}
+                    {(['day', 'week', 'month'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setPeriodFilter(f)}
+                        className={cn(
+                          "flex-1 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg transition-all",
+                          periodFilter === f ? "bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+                        )}
+                      >
+                        {f === 'day' ? 'Dia' : f === 'week' ? 'Semana' : 'Mês'}
+                      </button>
+                    ))}
                 </div>
                 <div className="flex items-center justify-between px-2 pb-1">
                   <button 
-                    onClick={prevInsightRange}
+                    onClick={prevPeriodRange}
                     className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
                   >
                     <ChevronLeft size={16} />
                   </button>
                   <div className="text-center font-black text-sm dark:text-white capitalize">
-                    {insightRangeLabel.label}
+                    {periodRangeLabel.label}
                   </div>
                   <button 
-                    onClick={nextInsightRange}
+                    onClick={nextPeriodRange}
                     className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg text-gray-400 hover:text-gray-900 dark:hover:text-white transition-all active:scale-95"
                   >
                     <ChevronRight size={16} />
                   </button>
                 </div>
+                {isLoadingInsights && (
+                  <div className="h-1 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden absolute bottom-0 left-0">
+                    <motion.div 
+                      className="h-full bg-green-500"
+                      initial={{ width: "0%", x: "-100%" }}
+                      animate={{ width: "50%", x: "200%" }}
+                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                    />
+                  </div>
+                )}
               </div>
 
-              {!metrics ? (
+              {!metrics || isLoadingInsights ? (
                 <div className="text-center py-20 space-y-4">
                   <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                    <BarChart3 className="text-gray-300" size={32} />
+                    {isLoadingInsights ? (
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                      >
+                        <Car className="text-green-500" size={32} />
+                      </motion.div>
+                    ) : (
+                      <BarChart3 className="text-gray-300" size={32} />
+                    )}
                   </div>
-                  <p className="text-gray-500 font-medium">Nenhum dado para este período.</p>
+                  <p className="text-gray-500 font-medium">
+                    {isLoadingInsights ? "Carregando dados das corridas..." : "Nenhum dado para este período."}
+                  </p>
                 </div>
               ) : (
                 <>
@@ -4523,6 +4631,35 @@ Exemplo de retorno:
                       </div>
                     </div>
                   </div>
+
+                  {allTimeMetrics && (
+                    <Card className="bg-gray-50/50 dark:bg-black/20 border-gray-100 dark:border-white/5 p-6">
+                      <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2">
+                        <History size={12} /> Média Histórica Geral
+                      </h3>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">R$/Hora Médio</p>
+                          <p className="text-xl font-black text-gray-900 dark:text-white">R$ {allTimeMetrics.revenuePerHour.toFixed(2)}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">R$/KM Médio</p>
+                          <p className="text-xl font-black text-gray-900 dark:text-white">R$ {allTimeMetrics.revenuePerKm.toFixed(2)}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Ticket Médio</p>
+                          <p className="text-xl font-black text-gray-900 dark:text-white">R$ {allTimeMetrics.ticketMedio.toFixed(2)}</p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Total Geral</p>
+                          <p className="text-xl font-black text-gray-900 dark:text-white">R$ {allTimeMetrics.totalRevenue.toLocaleString('pt-BR')}</p>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-4 italic font-medium flex items-center gap-1.5">
+                        <Sparkles size={10} className="text-blue-500" /> Comparação com todo seu histórico registrado.
+                      </p>
+                    </Card>
+                  )}
 
                   {/* Gráfico de Faturamento */}
                   {chartsData.barData.length > 0 && (
@@ -5438,7 +5575,7 @@ Exemplo de retorno:
         {historyComparisonData && historyComparisonData.current ? (
           <div className="space-y-6">
             <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl flex flex-col gap-1 border border-gray-100 dark:border-gray-800">
-              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest text-center mb-4">Visão Geral: {historyRangeLabel.type}</p>
+              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest text-center mb-4">Visão Geral: {periodRangeLabel.type}</p>
               
               <div className="grid grid-cols-1 gap-4">
                 <ComparisonCard 
@@ -5488,7 +5625,7 @@ Exemplo de retorno:
               </div>
             </div>
             
-            {(historyFilter === 'week' && planningMetrics) && (
+            {(periodFilter === 'week' && planningMetrics) && (
               <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 p-4 rounded-2xl">
                  <p className="text-[10px] text-green-700 dark:text-green-400 font-black uppercase tracking-widest mb-2 flex items-center justify-between"><span>Progresso da Meta Mensal</span> <span>{Math.min(100, (planningMetrics.revenueSoFar / planningMetrics.revenueNeededTotal) * 100).toFixed(1)}%</span></p>
                  <div className="w-full bg-green-200 dark:bg-green-900/40 h-2.5 rounded-full overflow-hidden shadow-inner">
@@ -6127,7 +6264,7 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
   initialData?: Expense,
   onDelete?: () => void
 }) {
-  const [date, setDate] = useState(initialData ? format((initialData.date?.toDate() || new Date()), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [date, setDate] = useState(initialData ? format(ensureDate(initialData.date), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [category, setCategory] = useState<Expense['category']>(initialData ? initialData.category : 'Manutenção');
   const [value, setValue] = useState(initialData?.value?.toString() || '');
   const [km, setKm] = useState(initialData?.kmAtExpense?.toString() || '');
@@ -6222,7 +6359,7 @@ function FuelForm({ onSubmit, initialData, onDelete }: {
   initialData?: Fuel,
   onDelete?: () => void
 }) {
-  const [date, setDate] = useState(initialData ? format((initialData.date?.toDate() || new Date()), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [date, setDate] = useState(initialData ? format(ensureDate(initialData.date), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [km, setKm] = useState(initialData ? initialData.km.toString() : '');
   const [price, setPrice] = useState(initialData ? initialData.pricePerLiter.toString() : '');
   const [total, setTotal] = useState(initialData ? initialData.totalValue.toString() : '');
@@ -6323,8 +6460,8 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
   initialData?: Shift,
   onDelete?: () => void
 }) {
-  const [start, setStart] = useState(initialData ? format((initialData.startTime?.toDate() || new Date()), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
-  const [end, setEnd] = useState(initialData && initialData.endTime ? format((initialData.endTime?.toDate() || new Date()), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [start, setStart] = useState(initialData ? format(ensureDate(initialData.startTime), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
+  const [end, setEnd] = useState(initialData && initialData.endTime ? format(ensureDate(initialData.endTime), "yyyy-MM-dd'T'HH:mm") : format(new Date(), "yyyy-MM-dd'T'HH:mm"));
   const [startKm, setStartKm] = useState(initialData ? initialData.startKm.toString() : '');
   const [endKm, setEndKm] = useState(initialData ? (initialData.endKm || '').toString() : '');
   const [revenue, setRevenue] = useState(initialData ? initialData.totalRevenue.toString() : '');
@@ -6334,7 +6471,7 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
 
   const [activeTimeStr, setActiveTimeStr] = useState(() => {
     if (!initialData) return '';
-    const secs = initialData.activeTimeSeconds || Math.max(0, differenceInSeconds(initialData.endTime?.toDate() || new Date(), initialData.startTime?.toDate() || new Date()));
+    const secs = initialData.activeTimeSeconds || Math.max(0, differenceInSeconds(ensureDate(initialData.endTime), ensureDate(initialData.startTime)));
     const h = Math.floor(secs / 3600);
     const m = Math.floor((secs % 3600) / 60);
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
@@ -6495,7 +6632,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
     try {
       let startTimeDate: Date | null = null;
       if (timeStr) {
-        const shiftDate = shift.startTime.toDate();
+        const shiftDate = ensureDate(shift.startTime);
         const [hh, mm] = timeStr.split(':');
         startTimeDate = new Date(shiftDate);
         startTimeDate.setHours(parseInt(hh, 10));
