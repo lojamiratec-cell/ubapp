@@ -22,7 +22,7 @@ import {
   signInWithPopup, signInWithRedirect, onAuthStateChanged, User, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { 
-  collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, writeBatch, increment
+  collection, doc, setDoc, addDoc, onSnapshot, query, where, orderBy, Timestamp, serverTimestamp, updateDoc, deleteDoc, getDocs, getDoc, writeBatch, increment
 } from 'firebase/firestore';
 import { format, differenceInSeconds, differenceInDays, startOfDay, endOfDay, subDays, subWeeks, subMonths, addDays, addWeeks, addMonths, isWithinInterval, isSameDay, isSameWeek, isSameMonth, startOfWeek, endOfWeek, startOfMonth, endOfMonth } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -31,7 +31,8 @@ import {
 } from 'recharts';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Shift, Trip, Expense, ShiftStatus, ShiftState, Fuel, UserSettings, FixedExpense, Withdrawal } from './types';
+import { Shift, Trip, Expense, ShiftStatus, ShiftState, Fuel, UserSettings, FixedExpense, Withdrawal, MonthlyStat } from './types';
+import { syncMonthlyStats } from './monthlyStats';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -655,6 +656,8 @@ export default function App() {
   const [aiReport, setAiReport] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
       const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [monthlyStatsDoc, setMonthlyStatsDoc] = useState<MonthlyStat | null>(null);
+  const [isLoadingMonthlyStats, setIsLoadingMonthlyStats] = useState(false);
 
     useEffect(() => {
     if (!user) return;
@@ -671,7 +674,7 @@ export default function App() {
       scopeShifts = filteredShiftsForLoading.filter(s => isSameMonth(ensureDate(s.startTime), targetDate));
     }
 
-    const missingShifts = scopeShifts.filter(s => s.totalTrips > 0 && !shiftTrips[s.id]);
+    const missingShifts = scopeShifts.filter(s => (s.totalTrips > 0 || s.totalRevenue > 0) && !shiftTrips[s.id]);
     
     if (missingShifts.length > 0) {
       setIsLoadingInsights(true);
@@ -707,7 +710,34 @@ export default function App() {
     }
   }, [periodFilter, referenceDate, shifts, user]);
 
-    
+  useEffect(() => {
+    const fetchMonthlyStats = async () => {
+      if (!user || periodFilter !== 'month') {
+        setMonthlyStatsDoc(null);
+        return;
+      }
+      setIsLoadingMonthlyStats(true);
+      try {
+        const year = referenceDate.getFullYear();
+        const month = String(referenceDate.getMonth() + 1).padStart(2, '0');
+        const docId = `${user.uid}_${year}_${month}`;
+        const ref = doc(db, 'monthly_stats', docId);
+        const sn = await getDoc(ref);
+        if (sn.exists()) {
+          setMonthlyStatsDoc(sn.data() as MonthlyStat);
+        } else {
+          setMonthlyStatsDoc(null);
+        }
+      } catch (e) {
+        console.error("Failed to load monthly stats", e);
+        setMonthlyStatsDoc(null);
+      } finally {
+        setIsLoadingMonthlyStats(false);
+      }
+    };
+    fetchMonthlyStats();
+  }, [user, periodFilter, referenceDate]);
+
     useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
@@ -1056,9 +1086,11 @@ REGRAS CRÍTICAS:
     setIsImportingData(true);
     try {
       const batch = writeBatch(db);
+      const importedShiftIds: string[] = [];
       
       for (const shiftData of parsedImportData) {
         const shiftRef = doc(collection(db, 'shifts'));
+        importedShiftIds.push(shiftRef.id);
         const shiftDoc = {
           userId: user.uid,
           startTime: Timestamp.fromDate(new Date(shiftData.startTime)),
@@ -1094,6 +1126,11 @@ REGRAS CRÍTICAS:
       }
 
       await batch.commit();
+      
+      for (const id of importedShiftIds) {
+        await recalculateShiftTotals(id);
+      }
+
       setShowImportPreviewModal(false);
       setParsedImportData(null);
       setImportText('');
@@ -1268,6 +1305,53 @@ REGRAS CRÍTICAS:
     document.body.removeChild(link);
   };
 
+  const recalculateShiftTotals = async (shiftId: string) => {
+    try {
+      const tripsRef = collection(db, 'shifts', shiftId, 'trips');
+      const q = query(tripsRef);
+      const snap = await getDocs(q);
+      
+      let totalTrips = 0;
+      let totalRevenueFromTrips = 0;
+      let totalDistanceFromTrips = 0;
+      let totalDurationFromTrips = 0;
+      let totalDynamicValue = 0;
+
+      snap.docs.forEach(d => {
+        const data = d.data() as Trip;
+        if (!data.isCancelled) {
+          totalTrips += 1;
+          totalRevenueFromTrips += data.value || 0;
+          totalDistanceFromTrips += data.distanceKm || 0;
+          totalDurationFromTrips += data.durationSeconds || 0;
+          totalDynamicValue += data.dynamicValue || 0;
+        }
+      });
+
+      const avgTicket = totalTrips > 0 ? totalRevenueFromTrips / totalTrips : 0;
+
+      await updateDoc(doc(db, 'shifts', shiftId), {
+        totalTrips,
+        totalRevenueFromTrips,
+        totalDistanceFromTrips,
+        totalDurationFromTrips,
+        totalDynamicValue,
+        avgTicket,
+        updatedAt: serverTimestamp()
+      });
+
+      // Find the shift in memory or from DB to get its date
+      const shiftDocData = shifts.find(s => s.id === shiftId);
+      if (shiftDocData && user) {
+        const maintPerc = settings?.maintenancePercentage ?? 10;
+        const maintCost = settings?.maintenanceCostPerKm ?? 0.15;
+        await syncMonthlyStats(user.uid, ensureDate(shiftDocData.startTime), maintPerc, maintCost);
+      }
+    } catch (err) {
+      console.error('Error recalculating shift totals:', err);
+    }
+  };
+
   const startShift = async (km: number, autonomy: number) => {
     if (!user) return;
     try {
@@ -1347,6 +1431,9 @@ REGRAS CRÍTICAS:
 
     try {
       await updateDoc(doc(db, 'shifts', activeShift.id), updates);
+      if (newState === 'ride' && prevState !== 'ride') {
+        await recalculateShiftTotals(activeShift.id);
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
     }
@@ -1490,6 +1577,7 @@ REGRAS CRÍTICAS:
         }, { merge: true });
       }
       
+      await recalculateShiftTotals(activeShift.id);
       setShowQuickTripModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `shifts/${activeShift.id}/trips`);
@@ -1579,6 +1667,10 @@ REGRAS CRÍTICAS:
         }, { merge: true });
       }
 
+      const maintPerc = settings?.maintenancePercentage ?? 10;
+      const maintCost = settings?.maintenanceCostPerKm ?? 0.15;
+      await syncMonthlyStats(user.uid, ensureDate(activeShift.startTime), maintPerc, maintCost);
+
       setShowFinishModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift?.id}`);
@@ -1650,6 +1742,7 @@ REGRAS CRÍTICAS:
       }
 
       await batch.commit();
+      await recalculateShiftTotals(selectedShiftId);
       setShowTripModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `shifts/${selectedShiftId}/trips_batch`);
@@ -1729,6 +1822,11 @@ REGRAS CRÍTICAS:
         totalPersonalKm: personalKm,
         lastKm: endKm
       });
+      
+      const maintPerc = settings?.maintenancePercentage ?? 10;
+      const maintCost = settings?.maintenanceCostPerKm ?? 0.15;
+      await syncMonthlyStats(user.uid, start, maintPerc, maintCost);
+
       setShowPastShiftModal(false);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, 'shifts');
@@ -1945,6 +2043,7 @@ REGRAS CRÍTICAS:
     if (!user) return;
     try {
       await deleteDoc(doc(db, 'shifts', shiftId, 'trips', tripId));
+      await recalculateShiftTotals(shiftId);
       // No need to manually update state, onSnapshot handles it
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `shifts/${shiftId}/trips/${tripId}`);
@@ -1974,6 +2073,7 @@ REGRAS CRÍTICAS:
         const batch = writeBatch(db);
         tripsSnap.docs.forEach(d => batch.delete(d.ref));
         await batch.commit();
+        await recalculateShiftTotals(shiftId);
       }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `shifts/${shiftId}/trips`);
@@ -2572,16 +2672,17 @@ Exemplo de retorno:
     let totalTripsEver = 0;
 
     finishedShifts.forEach(s => {
-      if (s.totalTrips > 0) {
-        const avgDistance = (s.totalWorkKm || ((s.endKm || 0) - s.startKm)) / s.totalTrips;
+      const tripsCount = Math.max(s.totalTrips || 0, (shiftTrips[s.id] || []).filter(t => !t.isCancelled).length);
+      if (tripsCount > 0) {
+        const avgDistance = (s.totalWorkKm || ((s.endKm || 0) - s.startKm)) / tripsCount;
         let bucket;
         if (avgDistance < 5) bucket = profile.short;
         else if (avgDistance < 12) bucket = profile.medium;
         else bucket = profile.long;
 
-        bucket.revenue += s.totalRevenue;
-        bucket.trips += s.totalTrips;
-        totalTripsEver += s.totalTrips;
+        bucket.revenue += s.totalRevenueFromTrips || s.totalRevenue;
+        bucket.trips += tripsCount;
+        totalTripsEver += tripsCount;
       }
     });
 
@@ -2593,7 +2694,7 @@ Exemplo de retorno:
       longPerc: totalTripsEver > 0 ? (profile.long.trips / totalTripsEver) * 100 : 0,
       longAvgVal: profile.long.trips > 0 ? profile.long.revenue / profile.long.trips : 0
     };
-  }, [shifts]);
+  }, [shifts, shiftTrips]);
 
   const topShifts = useMemo(() => {
     const now = new Date();
@@ -2692,7 +2793,7 @@ Exemplo de retorno:
     const totalRevenue = finished.reduce((acc, s) => acc + s.totalRevenue, 0);
     const totalKm = finished.reduce((acc, s) => acc + (s.totalWorkKm || ((s.endKm || 0) - s.startKm)), 0);
     const totalSeconds = finished.reduce((acc, s) => acc + s.activeTimeSeconds, 0);
-    const totalTrips = finished.reduce((acc, s) => acc + s.totalTrips, 0);
+    const totalTrips = finished.reduce((acc, s) => acc + Math.max(s.totalTrips || 0, (shiftTrips[s.id] || []).filter(t => !t.isCancelled).length), 0);
 
     return {
       revenuePerHour: totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0,
@@ -2703,7 +2804,7 @@ Exemplo de retorno:
       totalTrips,
       totalRevenue
     };
-  }, [shifts]);
+  }, [shifts, shiftTrips]);
 
   const metrics = useMemo(() => {
     const targetDate = referenceDate;
@@ -2730,7 +2831,7 @@ Exemplo de retorno:
     const totalRevenue = filteredShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
     const totalKmWork = filteredShifts.reduce((acc, s) => acc + (s.totalWorkKm || ((s.endKm || 0) - s.startKm)), 0);
     const totalSeconds = filteredShifts.reduce((acc, s) => acc + s.activeTimeSeconds, 0);
-    const totalTrips = filteredShifts.reduce((acc, s) => acc + s.totalTrips, 0);
+    const totalTrips = filteredShifts.reduce((acc, s) => acc + Math.max(s.totalTrips || 0, (shiftTrips[s.id] || []).filter(t => !t.isCancelled).length), 0);
     
     // Personal KM logic: Sum of totalPersonalKm within shifts, and calculate gaps for old shifts
     const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
@@ -2781,6 +2882,7 @@ Exemplo de retorno:
         if (!shiftsMissingTrips.includes(dayStr)) {
           shiftsMissingTrips.push(dayStr);
         }
+        if (shift.totalDynamicValue) totalDynamicValue += shift.totalDynamicValue;
       }
       
       allTripsInPeriod = allTripsInPeriod.concat(trips);
@@ -2859,40 +2961,76 @@ Exemplo de retorno:
       { name: "Combustível Pessoal", value: personalFuelCost, color: "#EF4444" }, // red-500
     ].filter(i => i.value > 0);
 
+    let finalNetProfit = netProfit;
+    let finalEstimatedProfit = totalRevenue - estimatedFuelCost - maintenanceCost;
+    let finalRevenue = totalRevenue;
+    let finalTrips = totalTrips;
+    let finalHours = totalSeconds / 3600;
+    let finalKmWork = totalKmWork;
+    let finalFuelCost = estimatedFuelCost;
+    let finalMaintenanceCost = maintenanceCost;
+    let finalTicket = totalTrips > 0 ? totalRevenue / totalTrips : 0;
+    let finalRPH = totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0;
+    let finalRPKM = totalKmWork > 0 ? totalRevenue / totalKmWork : 0;
+    let finalDynamic = totalDynamicValue;
+    
+    if (periodFilter === 'month' && monthlyStatsDoc) {
+      finalRevenue = monthlyStatsDoc.totalRevenue;
+      finalTrips = monthlyStatsDoc.totalTrips;
+      finalHours = monthlyStatsDoc.totalHours;
+      finalKmWork = monthlyStatsDoc.totalKm;
+      finalFuelCost = monthlyStatsDoc.fuelCost;
+      finalMaintenanceCost = monthlyStatsDoc.maintenanceReserve;
+      finalDynamic = monthlyStatsDoc.totalDynamic;
+      finalNetProfit = monthlyStatsDoc.netProfit;
+      finalEstimatedProfit = monthlyStatsDoc.netProfit;
+      
+      finalTicket = finalTrips > 0 ? finalRevenue / finalTrips : 0;
+      finalRPH = monthlyStatsDoc.avgPerHour || (finalHours > 0 ? finalRevenue / finalHours : 0);
+      finalRPKM = monthlyStatsDoc.avgPerKm || (finalKmWork > 0 ? finalRevenue / finalKmWork : 0);
+      
+      if (monthlyStatsDoc.bestHour !== null) {
+        bestHourInfo = { hour: monthlyStatsDoc.bestHour, rph: 0 };
+      }
+      if (monthlyStatsDoc.bestDay) {
+        bestDayInfo = { day: new Date(`${monthlyStatsDoc.bestDay}T12:00:00Z`).getDay(), rph: 0 };
+      }
+    }
+
     return {
       top3BestTrips,
       top3WorstTrips,
       bestHourInfo,
       bestDayInfo,
-      revenuePerKm: totalKmWork > 0 ? totalRevenue / totalKmWork : 0,
-      revenuePerHour: totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0,
-      ticketMedio: totalTrips > 0 ? totalRevenue / totalTrips : 0,
-      netProfit: totalRevenue - totalExpenses - totalFuelValue,
-      estimatedProfit: totalRevenue - estimatedFuelCost - maintenanceCost,
-      totalRevenue,
-      totalTrips,
+      revenuePerKm: finalRPKM,
+      revenuePerHour: finalRPH,
+      ticketMedio: finalTicket,
+      netProfit: finalNetProfit,
+      estimatedProfit: finalEstimatedProfit,
+      totalRevenue: finalRevenue,
+      totalTrips: finalTrips,
       totalExpenses: totalExpenses + totalFuelValue,
-      totalKmWork,
+      totalKmWork: finalKmWork,
       totalKmPersonal,
-      totalHours: totalSeconds / 3600,
+      totalHours: finalHours,
       avgConsumption: totalKmWork > 0 && totalLiters > 0 ? totalKmWork / totalLiters : 0,
-      estimatedFuelCost,
-      maintenanceCost,
+      estimatedFuelCost: finalFuelCost,
+      maintenanceCost: finalMaintenanceCost,
       personalFuelCost,
       personalFuelLiters,
       totalFuelValue,
       totalLiters,
-      totalCosts: estimatedFuelCost + maintenanceCost,
+      totalCosts: finalFuelCost + finalMaintenanceCost,
       maintenancePercentage: currentMaintPercentage,
-      dailyGoalProgress: settings ? (totalRevenue / settings.dailyRevenueGoal) * 100 : 0,
-      totalDynamicValue,
+      dailyGoalProgress: settings ? (finalRevenue / settings.dailyRevenueGoal) * 100 : 0,
+      totalDynamicValue: finalDynamic,
       totalCancelledTrips,
       totalCancelledValue,
       allTripsInPeriod,
       shiftsMissingTrips,
       pieData
     };
-  }, [shifts, expenses, fuelRecords, periodFilter, settings, shiftTrips, referenceDate]);
+  }, [shifts, expenses, fuelRecords, periodFilter, settings, shiftTrips, referenceDate, monthlyStatsDoc]);
 
   const activeShiftMetrics = useMemo(() => {
     if (!activeShift) return null;
@@ -2948,7 +3086,7 @@ Exemplo de retorno:
 
     const totalRevenue = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalRevenue) || 0), 0);
     const totalTime = allTodayShifts.filter(s => s.id !== activeShift?.id).reduce((acc, s) => acc + (Number(s.activeTimeSeconds) || 0), 0) + (activeShift ? elapsedTime : 0);
-    const totalTrips = allTodayShifts.reduce((acc, s) => acc + (Number(s.totalTrips) || 0), 0);
+    const totalTrips = allTodayShifts.reduce((acc, s) => acc + Math.max(Number(s.totalTrips) || 0, (shiftTrips[s.id] || []).filter(t => !t.isCancelled).length), 0);
     
     const sortedTodayShifts = [...allTodayShifts].sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
     const startKm = sortedTodayShifts.length > 0 ? sortedTodayShifts[0].startKm : 0;
@@ -3896,16 +4034,23 @@ Exemplo de retorno:
                                       <Clock size={12} />
                                       {formatTime(shift.activeTimeSeconds)}
                                     </div>
-                                    {shift.totalTrips > 0 && (
+                                    {Math.max(shift.totalTrips || 0, shiftTripsCount) > 0 && (
                                       <div className="flex items-center gap-1.5 text-xs font-bold bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-500/20">
                                         <Users size={12} />
-                                        {shift.totalTrips} Corridas
+                                        {Math.max(shift.totalTrips || 0, shiftTripsCount)} Corridas
                                       </div>
                                     )}
-                                    <div className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
-                                      <MapPin size={12} />
-                                      {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
-                                    </div>
+                                    {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) > 0 ? (
+                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
+                                        <MapPin size={12} />
+                                        {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-lg border border-orange-100 dark:border-orange-500/20">
+                                        <AlertCircle size={12} />
+                                        Dados Incompletos
+                                      </div>
+                                    )}
                                   </div>
                                   
                                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 pt-4 border-t border-gray-100 dark:border-gray-800">
@@ -4569,7 +4714,7 @@ Exemplo de retorno:
                     <ChevronRight size={16} />
                   </button>
                 </div>
-                {isLoadingInsights && (
+                {(isLoadingInsights || isLoadingMonthlyStats) && (
                   <div className="h-1 w-full bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden absolute bottom-0 left-0">
                     <motion.div 
                       className="h-full bg-green-500"
@@ -4581,10 +4726,10 @@ Exemplo de retorno:
                 )}
               </div>
 
-              {!metrics || isLoadingInsights ? (
+              {!metrics || isLoadingInsights || isLoadingMonthlyStats ? (
                 <div className="text-center py-20 space-y-4">
                   <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto">
-                    {isLoadingInsights ? (
+                    {(isLoadingInsights || isLoadingMonthlyStats) ? (
                       <motion.div
                         animate={{ rotate: 360 }}
                         transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
@@ -4596,7 +4741,7 @@ Exemplo de retorno:
                     )}
                   </div>
                   <p className="text-gray-500 font-medium">
-                    {isLoadingInsights ? "Carregando dados das corridas..." : "Nenhum dado para este período."}
+                    {(isLoadingInsights || isLoadingMonthlyStats) ? "Carregando dados das corridas..." : "Nenhum dado para este período."}
                   </p>
                 </div>
               ) : (
@@ -5683,7 +5828,7 @@ Exemplo de retorno:
       </Modal>
 
       <Modal isOpen={showResumeModal} onClose={() => setShowResumeModal(false)} title="Retomar Turno">
-        <ResumeShiftForm onSubmit={resumeShift} />
+        <ResumeShiftForm onSubmit={resumeShift} initialKm={lastRecordedKm} />
       </Modal>
 
       <Modal isOpen={showFinishModal} onClose={() => setShowFinishModal(false)} title="Finalizar Turno">
@@ -5903,6 +6048,7 @@ Exemplo de retorno:
               }
 
               await batch.commit();
+              await recalculateShiftTotals(selectedShiftId);
             }}
             onDelete={async (tripId) => {
               const currentShift = shifts.find(s => s.id === selectedShiftId);
@@ -5914,6 +6060,7 @@ Exemplo de retorno:
               // DONT update Shift's total trips or revenue. User manages shift totals independently of detailed trips.
               
               await batch.commit();
+              await recalculateShiftTotals(selectedShiftId);
             }}
           />
         )}
@@ -6053,6 +6200,10 @@ function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
       <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
       <Button 
         onClick={async () => {
+          if (Number(value) < 0) {
+            alert('O faturamento não pode ser negativo.');
+            return;
+          }
           setIsSubmitting(true);
           try {
             await onSubmit(Number(value));
@@ -6081,6 +6232,14 @@ function PauseShiftForm({ onSubmit, currentRevenue, initialKm }: { onSubmit: (re
       <Input label="Autonomia Restante (KM)" type="number" inputMode="numeric" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
       <Button 
         onClick={async () => {
+          if (Number(km) < initialKm) {
+            alert(`A KM Atual (${km}) não pode ser menor que a inicial (${initialKm}).`);
+            return;
+          }
+          if (Number(revenue) < 0) {
+            alert('O faturamento não pode ser negativo.');
+            return;
+          }
           setIsSubmitting(true);
           try {
              await onSubmit(Number(revenue), Number(km), Number(autonomy));
@@ -6097,7 +6256,7 @@ function PauseShiftForm({ onSubmit, currentRevenue, initialKm }: { onSubmit: (re
   );
 }
 
-function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: number) => void }) {
+function ResumeShiftForm({ onSubmit, initialKm }: { onSubmit: (km?: number, autonomy?: number) => void, initialKm?: number }) {
   const [moved, setMoved] = useState<boolean | null>(null);
   const [km, setKm] = useState('');
   const [autonomy, setAutonomy] = useState('');
@@ -6143,6 +6302,10 @@ function ResumeShiftForm({ onSubmit }: { onSubmit: (km?: number, autonomy?: numb
       <Input label="Nova Autonomia (KM)" type="number" value={autonomy} onChange={e => setAutonomy(e.target.value)} />
       <Button 
         onClick={async () => {
+           if (initialKm && Number(km) < initialKm) {
+             alert(`A Nova KM (${km}) não pode ser menor que a anterior (${initialKm}).`);
+             return;
+           }
            setIsSubmitting(true);
            try {
               await onSubmit(Number(km), Number(autonomy));
@@ -6175,6 +6338,15 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
     const finalRevenue = revenue === '' ? currentRevenue : Number(revenue);
     const finalKm = km === '' ? initialKm : Number(km);
     
+    if (finalKm < initialKm) {
+       alert(`A KM Atual (${finalKm}) não pode ser menor que a inicial (${initialKm}).`);
+       return;
+    }
+    if (finalRevenue < 0) {
+       alert('O faturamento não pode ser negativo.');
+       return;
+    }
+
     if (finalRevenue >= 0 && finalKm >= 0) {
       onSubmit(finalRevenue, finalKm);
     }
@@ -6242,6 +6414,14 @@ function FinishShiftForm({ onSubmit, currentRevenue, initialKm, todayTripsSoFar,
 
       <Button 
         onClick={async () => {
+           if (Number(km) < initialKm) {
+             alert(`A KM Final (${km}) não pode ser menor que a inicial (${initialKm}).`);
+             return;
+           }
+           if (Number(revenue) < 0) {
+             alert('O faturamento não pode ser negativo.');
+             return;
+           }
            setIsSubmitting(true);
            try {
               await onSubmit(Number(km), Number(autonomy), Number(avgCons), Number(revenue), calculatedShiftTrips);
@@ -6498,6 +6678,15 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
         {!showConfirmDelete ? (
           <>
             <Button onClick={() => {
+              if (Number(endKm) < Number(startKm)) {
+                alert(`A KM Final (${endKm}) não pode ser menor que a inicial (${startKm}).`);
+                return;
+              }
+              if (Number(revenue) < 0) {
+                alert('O faturamento não pode ser negativo.');
+                return;
+              }
+              
               let activeSecs: number | undefined;
               if (activeTimeStr && activeTimeStr.includes(':')) {
                 const parts = activeTimeStr.split(':');
@@ -6505,7 +6694,15 @@ function PastShiftForm({ onSubmit, initialData, onDelete }: {
                   activeSecs = (Number(parts[0]) * 3600) + (Number(parts[1]) * 60);
                 }
               }
-              onSubmit(new Date(start), new Date(end), Number(startKm), Number(endKm), Number(revenue), Number(trips), Number(avgCons), activeSecs);
+
+              const generatedSecs = Math.max(0, differenceInSeconds(new Date(end), new Date(start)));
+              const finalSecs = activeSecs !== undefined ? activeSecs : generatedSecs;
+              if (Number(revenue) > 0 && finalSecs === 0) {
+                alert('O tempo do turno não pode ser zero se houver faturamento. Ajuste o Início e Fim ou o Tempo Trabalhado.');
+                return;
+              }
+
+              onSubmit(new Date(start), new Date(end), Number(startKm), Number(endKm), Number(revenue), Number(trips), Number(avgCons), finalSecs);
             }} className="w-full py-4">
               {initialData ? 'Atualizar Turno' : 'Salvar Turno'}
             </Button>
@@ -6641,8 +6838,20 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
       }
       
       const totalVal = parseFloat(valueStr || '0');
-      const dynVal = isDynamic ? parseFloat(dynamicValueStr || '0') : 0;
+      let dynVal = isDynamic ? parseFloat(dynamicValueStr || '0') : 0;
       const distVal = parseFloat(distanceStr || '0');
+      
+      if (totalVal < 0) {
+        alert('O faturamento da corrida não pode ser negativo.');
+        setIsSubmitting(false);
+        return;
+      }
+      if (distVal < 0) {
+        alert('A distância da corrida não pode ser negativa.');
+        setIsSubmitting(false);
+        return;
+      }
+      if (Number.isNaN(dynVal) || dynVal < 0) dynVal = 0;
       
       let sec = 0;
       if (durationStr) {

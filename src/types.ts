@@ -17,6 +17,12 @@ export interface Shift {
   avgConsumption?: number; // KM/L average from dashboard
   totalRevenue: number;
   totalTrips: number;
+  totalRevenueFromTrips?: number;
+  totalDistanceFromTrips?: number;
+  totalDurationFromTrips?: number;
+  totalDynamicValue?: number;
+  avgTicket?: number;
+  updatedAt?: Timestamp;
   status: ShiftStatus;
   activeTimeSeconds: number;
   lastStartedAt: Timestamp;
@@ -116,4 +122,23 @@ export interface UserProfile {
   displayName?: string;
   photoURL?: string;
   preferredCurrency: string;
+}
+
+export interface MonthlyStat {
+  userId: string;
+  yearMonth: string; // 'YYYY_MM'
+  totalRevenue: number;
+  totalTrips: number;
+  totalShifts: number;
+  totalKm: number;
+  totalHours: number;
+  avgPerHour: number;
+  avgPerKm: number;
+  totalDynamic: number;
+  fuelCost: number;
+  maintenanceReserve: number;
+  netProfit: number;
+  bestDay: string | null; // 'YYYY-MM-DD'
+  bestHour: number | null;
+  updatedAt: any;
 }

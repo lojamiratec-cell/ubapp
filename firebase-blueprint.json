@@ -123,6 +123,30 @@
         "lastTimingBeltKm": { "type": "number" }
       },
       "required": ["userId", "maintenanceCostPerKm", "dailyRevenueGoal"]
+    },
+    "MonthlyStat": {
+      "title": "MonthlyStat",
+      "description": "Monthly summary of stats",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "yearMonth": { "type": "string" },
+        "totalRevenue": { "type": "number" },
+        "totalTrips": { "type": "number" },
+        "totalShifts": { "type": "number" },
+        "totalKm": { "type": "number" },
+        "totalHours": { "type": "number" },
+        "avgPerHour": { "type": "number" },
+        "avgPerKm": { "type": "number" },
+        "totalDynamic": { "type": "number" },
+        "fuelCost": { "type": "number" },
+        "maintenanceReserve": { "type": "number" },
+        "netProfit": { "type": "number" },
+        "bestDay": { "type": "string" },
+        "bestHour": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "yearMonth", "totalRevenue"]
     }
   },
   "firestore": {
@@ -157,6 +181,10 @@
     "/withdrawals/{withdrawalId}": {
       "schema": "Withdrawal",
       "description": "Financial withdrawals and transfers"
+    },
+    "/monthly_stats/{statId}": {
+      "schema": "MonthlyStat",
+      "description": "Monthly summary of stats"
     }
   }
 }

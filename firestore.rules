@@ -149,9 +149,34 @@ service cloud.firestore {
              data.fee is number;
     }
 
+    function isValidMonthlyStat(data) {
+      return data.userId is string && data.userId.size() < 100 &&
+             data.yearMonth is string &&
+             data.totalRevenue is number &&
+             data.totalTrips is number &&
+             data.totalShifts is number &&
+             data.totalKm is number &&
+             data.totalHours is number &&
+             data.avgPerHour is number &&
+             data.avgPerKm is number &&
+             data.totalDynamic is number &&
+             data.fuelCost is number &&
+             data.maintenanceReserve is number &&
+             data.netProfit is number &&
+             (data.bestDay == null || data.bestDay is string) &&
+             (data.bestHour == null || data.bestHour is number) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /monthly_stats/{statId} {
+      allow read, delete: if isDocOwner();
+      allow update: if isDocOwner() && uidNotModified() && isValidMonthlyStat(request.resource.data);
+      allow create: if isAuthenticated() && uidUnchanged() && isValidMonthlyStat(request.resource.data);
+    }
 
     match /settings/{userId} {
       allow read: if isOwner(userId);
