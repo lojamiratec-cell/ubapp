@@ -73,7 +73,7 @@ service cloud.firestore {
     }
     
     function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.userId;
+      return isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
     }
 
     function uidUnchanged() {
@@ -104,7 +104,14 @@ service cloud.firestore {
              data.activeTimeSeconds is number &&
              data.totalWorkKm is number &&
              data.totalPersonalKm is number &&
-             data.lastKm is number;
+             data.lastKm is number &&
+             (!('endKm' in data) || data.endKm == null || data.endKm is number) &&
+             (!('totalDistanceFromTrips' in data) || data.totalDistanceFromTrips is number) &&
+             (!('totalDurationFromTrips' in data) || data.totalDurationFromTrips is number) &&
+             (!('totalRevenueFromTrips' in data) || data.totalRevenueFromTrips is number) &&
+             (!('totalDynamicValue' in data) || data.totalDynamicValue is number) &&
+             (!('avgTicket' in data) || data.avgTicket is number) &&
+             (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 
     function isValidTrip(data) {
@@ -113,7 +120,11 @@ service cloud.firestore {
              data.value is number &&
              data.durationSeconds is number &&
              data.distanceKm is number &&
-             data.timestamp is timestamp;
+             data.timestamp is timestamp &&
+             (!('startTime' in data) || data.startTime is timestamp) &&
+             (!('isComplete' in data) || data.isComplete is boolean) &&
+             (!('dynamicValue' in data) || data.dynamicValue is number) &&
+             (!('isCancelled' in data) || data.isCancelled is boolean);
     }
 
     function isValidExpense(data) {
@@ -163,8 +174,8 @@ service cloud.firestore {
              data.fuelCost is number &&
              data.maintenanceReserve is number &&
              data.netProfit is number &&
-             (data.bestDay == null || data.bestDay is string) &&
-             (data.bestHour == null || data.bestHour is number) &&
+             (!('bestDay' in data) || data.bestDay == null || data.bestDay is string) &&
+             (!('bestHour' in data) || data.bestHour == null || data.bestHour is number) &&
              (!('updatedAt' in data) || data.updatedAt is timestamp);
     }
 

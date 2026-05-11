@@ -69,7 +69,7 @@ export const syncMonthlyStats = async (userId: string, shiftDate: Date, maintPer
     
     // Process trips only for the filtered shifts
     for (const sId of shiftsIds) {
-      const qTrips = query(collection(db, 'shifts', sId, 'trips'));
+      const qTrips = query(collection(db, 'shifts', sId, 'trips'), where('userId', '==', userId));
       const tSnap = await getDocs(qTrips);
       tSnap.docs.forEach(tDoc => {
         const t = tDoc.data() as Trip;

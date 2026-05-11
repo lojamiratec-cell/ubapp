@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import { db } from '../../firebase';
 import { cn, ensureDate } from '../../lib/utils';
+import { HourlyBreakdown } from '../../components/HourlyBreakdown';
 import { Shift, Trip, UserSettings, Expense, Fuel, MonthlyStat, FixedExpense } from '../../types';
 
 interface InsightsProps {
@@ -246,7 +247,7 @@ export function InsightsModule({
       avgRpkm,
       totalHoursRemaining
     };
-  }, [settings, shifts]);
+  }, [settings, shifts, allTimeMetrics, fixedExpenses]);
 
   const metrics = useMemo(() => {
     const targetDate = referenceDate;
@@ -270,10 +271,37 @@ export function InsightsModule({
 
     if (filteredShiftsForMetrics.length === 0) return null;
 
+    const tripDetails = filteredShiftsForMetrics.reduce((acc, s) => {
+      const trips = (shiftTrips[s.id] || []).filter(t => !t.isCancelled);
+      const shiftTotal = s.totalTrips || 0;
+      const inState = trips.length;
+      
+      const total = Math.max(shiftTotal, inState);
+      const complete = trips.filter(t => t.isComplete).length;
+      const incomplete = Math.max(0, total - complete);
+      
+      return {
+        total: acc.total + total,
+        complete: acc.complete + complete,
+        incomplete: acc.incomplete + incomplete
+      };
+    }, { total: 0, complete: 0, incomplete: 0 });
+
     const totalRevenue = filteredShiftsForMetrics.reduce((acc, s) => acc + s.totalRevenue, 0);
     const totalKmWork = filteredShiftsForMetrics.reduce((acc, s) => acc + (s.totalWorkKm || ((s.endKm || 0) - s.startKm)), 0);
     const totalSeconds = filteredShiftsForMetrics.reduce((acc, s) => acc + s.activeTimeSeconds, 0);
-    const totalTrips = filteredShiftsForMetrics.reduce((acc, s) => acc + Math.max(s.totalTrips || 0, (shiftTrips[s.id] || []).filter(t => !t.isCancelled).length), 0);
+    const totalTrips = tripDetails.total;
+    const precisionPct = totalTrips > 0 ? (tripDetails.complete / totalTrips) : 0;
+    
+    let precisionLevel = 'Baixa';
+    let precisionColor = 'text-red-600 bg-red-50 dark:text-red-400 dark:bg-red-900/20';
+    if (precisionPct >= 0.8) {
+      precisionLevel = 'Alta';
+      precisionColor = 'text-green-600 bg-green-50 dark:text-green-400 dark:bg-green-900/20';
+    } else if (precisionPct >= 0.5) {
+      precisionLevel = 'Média';
+      precisionColor = 'text-yellow-600 bg-yellow-50 dark:text-yellow-400 dark:bg-yellow-900/20';
+    }
     
     const allFinishedShifts = shifts.filter(s => s.status === 'finished').sort((a, b) => (ensureDate(a.startTime).getTime()) - (ensureDate(b.startTime).getTime()));
     let totalKmPersonal = 0;
@@ -367,6 +395,7 @@ export function InsightsModule({
     });
 
     return {
+      shiftsForMetrics: filteredShiftsForMetrics,
       totalRevenue,
       totalKmWork,
       totalKmPersonal,
@@ -380,6 +409,10 @@ export function InsightsModule({
       totalDynamicValue,
       totalCancelledTrips,
       totalCancelledValue,
+      corridasCompletas: tripDetails.complete,
+      corridasIncompletas: tripDetails.incomplete,
+      precisionLevel,
+      precisionColor,
       revenuePerHour: totalSeconds > 0 ? totalRevenue / (totalSeconds / 3600) : 0,
       revenuePerKm: totalKmWork > 0 ? totalRevenue / totalKmWork : 0,
       ticketMedio: totalTrips > 0 ? totalRevenue / totalTrips : 0,
@@ -904,12 +937,30 @@ REGRAS CRÍTICAS:
                 <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5 col-span-2">
                   <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center justify-center gap-1.5"><Activity size={12} className="text-gray-400" /> Total de Viagens</p>
                   <p className="text-3xl font-black text-gray-900 dark:text-white text-center font-mono tracking-tighter">{metrics.totalTrips}</p>
+                  
+                  {metrics.totalTrips > 0 && (
+                    <div className="mt-3 pt-3 border-t border-gray-100 dark:border-white/5 flex flex-col items-center gap-2">
+                      <div className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-current/10", metrics.precisionColor)}>
+                        Precisão {metrics.precisionLevel}
+                      </div>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center px-4">
+                        {metrics.corridasCompletas} completas <span className="mx-1 text-gray-300">•</span> {metrics.corridasIncompletas} incompletas
+                        {periodFilter !== 'day' && <span className="block mt-1 text-[9px] opacity-70">Baseado em {(metrics.shiftsForMetrics.length)} turno(s)</span>}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
-          {allTimeMetrics && (
+          {periodFilter === 'day' && (
+            <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-2 pb-4 px-6 mt-4">
+               <HourlyBreakdown shifts={metrics.shiftsForMetrics} shiftTrips={shiftTrips} title="Ganhos por Hora no Dia" />
+            </div>
+          )}
+
+          {periodFilter === 'month' && allTimeMetrics && (
             <Card className="bg-gray-50/50 dark:bg-black/20 border-gray-100 dark:border-white/5 p-6">
               <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6 flex items-center gap-2">
                 <History size={12} /> Média Histórica Geral
@@ -965,23 +1016,25 @@ REGRAS CRÍTICAS:
           </div>
 
           {/* Strategic Intelligence */}
-          <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">
-            <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Inteligência Estratégica</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 rounded-2xl flex flex-col justify-center">
-                <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Clock size={12} /> Melhor Horário</p>
-                <p className="text-2xl font-black text-purple-700 dark:text-purple-300">
-                  {metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour.toString().padStart(2, '0')}:00` : '--:--'}
-                </p>
-              </div>
-              <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/20 rounded-2xl flex flex-col justify-center">
-                <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Calendar size={12} /> Melhor Dia</p>
-                <p className="text-xl font-black text-indigo-700 dark:text-indigo-300">
-                  {metrics.bestDayInfo.day !== -1 ? ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][metrics.bestDayInfo.day] : '---'}
-                </p>
+          {periodFilter !== 'day' && (
+            <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">
+              <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Inteligência Estratégica</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-4 bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/20 rounded-2xl flex flex-col justify-center">
+                  <p className="text-[10px] font-bold text-purple-600 dark:text-purple-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Clock size={12} /> Melhor Horário</p>
+                  <p className="text-2xl font-black text-purple-700 dark:text-purple-300">
+                    {metrics.bestHourInfo.hour !== -1 ? `${metrics.bestHourInfo.hour.toString().padStart(2, '0')}:00` : '--:--'}
+                  </p>
+                </div>
+                <div className="p-4 bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-100 dark:border-indigo-900/20 rounded-2xl flex flex-col justify-center">
+                  <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase mb-2 tracking-widest flex items-center gap-1.5"><Calendar size={12} /> Melhor Dia</p>
+                  <p className="text-xl font-black text-indigo-700 dark:text-indigo-300">
+                    {metrics.bestDayInfo.day !== -1 ? ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'][metrics.bestDayInfo.day] : '---'}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Extra Revenue */}
           <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">
@@ -1041,19 +1094,21 @@ REGRAS CRÍTICAS:
           </div>
 
           {/* Real Costs 30 Days */}
-          <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">
-            <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Custos Reais (30 dias)</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="p-4 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-2xl">
-                <p className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase mb-1">Combustível</p>
-                <p className="text-xl font-bold text-red-700 dark:text-red-300">R$ {costsMetrics.totalFuelValue30Days.toFixed(2)}</p>
-              </div>
-              <div className="p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/20 rounded-2xl">
-                <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase mb-1">Despesas</p>
-                <p className="text-xl font-bold text-orange-700 dark:text-orange-300">R$ {costsMetrics.totalExpenses30Days.toFixed(2)}</p>
+          {periodFilter === 'month' && (
+            <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">
+              <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Custos Reais (30 dias)</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-4 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-2xl">
+                  <p className="text-[10px] font-bold text-red-600 dark:text-red-400 uppercase mb-1">Combustível</p>
+                  <p className="text-xl font-bold text-red-700 dark:text-red-300">R$ {costsMetrics.totalFuelValue30Days.toFixed(2)}</p>
+                </div>
+                <div className="p-4 bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-900/20 rounded-2xl">
+                  <p className="text-[10px] font-bold text-orange-600 dark:text-orange-400 uppercase mb-1">Despesas</p>
+                  <p className="text-xl font-bold text-orange-700 dark:text-orange-300">R$ {costsMetrics.totalExpenses30Days.toFixed(2)}</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Hourly Analysis */}
           <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col pt-6 pb-4 px-6">

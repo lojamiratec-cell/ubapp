@@ -22,6 +22,8 @@ export interface Shift {
   totalDurationFromTrips?: number;
   totalDynamicValue?: number;
   avgTicket?: number;
+  goalRevenue?: number;
+  goalSeconds?: number;
   updatedAt?: Timestamp;
   status: ShiftStatus;
   activeTimeSeconds: number;
@@ -52,6 +54,7 @@ export interface Trip {
   startTime?: Timestamp; // The time the trip actually started
   dynamicValue?: number; // Surge pricing amount included in value
   isCancelled?: boolean;
+  isComplete?: boolean;
 }
 
 export interface Expense {

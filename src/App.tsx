@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { NumericFormat } from 'react-number-format';
 import { 
   Play, Pause, Square, History, DollarSign, BarChart3, 
   Plus, Compass, ChevronRight, ChevronLeft, LogOut, Car, Timer, Fuel as FuelIcon, ArrowRight,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle2, Clock, MapPin, Sparkles, Calendar, User as UserIcon, Target, Activity,
-  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X,
+  Settings as SettingsIcon, Sun, Moon, Download, FileText, Edit2, Upload, Coffee, Users, X, Ban, HelpCircle,
   Wallet, RefreshCw, ArrowDownLeft, ArrowUpRight, Calendar as CalendarIcon, Navigation
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -36,6 +36,9 @@ import { syncMonthlyStats } from './monthlyStats';
 
 import { cn, ensureDate } from './lib/utils';
 import { InsightsModule, ComparisonCard } from './modules/insights';
+import { HourlyBreakdown } from './components/HourlyBreakdown';
+
+import { CurrentHourHistory } from './components/CurrentHourHistory';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
 
@@ -160,10 +163,11 @@ export function getRpkmTier(rpkm: number) {
 }
 
 export function getRphTier(rph: number) {
-   if (rph >= 42) return { label: 'Ótimo', color: 'text-blue-500', bg: 'bg-blue-500/10' };
-   if (rph >= 38) return { label: 'Bom', color: 'text-green-500', bg: 'bg-green-500/10' };
-   if (rph > 32) return { label: 'Mediano', color: 'text-orange-500', bg: 'bg-orange-500/10' };
-   return { label: 'Ruim', color: 'text-red-500', bg: 'bg-red-500/10' };
+  if (rph >= 48) return { label: 'Ótimo', color: 'text-green-500', bg: 'bg-green-500/10', border: 'border-green-500/30' };
+  if (rph >= 42) return { label: 'Bom', color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' };
+  if (rph >= 36) return { label: 'Mediano', color: 'text-yellow-500', bg: 'bg-yellow-500/10', border: 'border-yellow-500/30' };
+  if (rph >= 32) return { label: 'Ruim', color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/30' };
+  return { label: 'Prejuízo', color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' };
 }
 
 // --- Live Shift Analysis Component (Radar Estratégico) ---
@@ -444,6 +448,7 @@ export default function App() {
   const [showFinishModal, setShowFinishModal] = useState(false);
   const [showExpenseModal, setShowExpenseModal] = useState(false);
   const [showFuelModal, setShowFuelModal] = useState(false);
+  const [showDailyGoalModal, setShowDailyGoalModal] = useState(false);
   const [showFixedExpenseModal, setShowFixedExpenseModal] = useState(false);
   const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
   const [showUpdateBalanceModal, setShowUpdateBalanceModal] = useState(false);
@@ -556,7 +561,7 @@ export default function App() {
   }, [groupedShifts]);
 
   const toggleDay = (dateKey: string) => {
-    setExpandedDays(prev => ({ ...prev, [dateKey]: !prev[dateKey] }));
+    setExpandedDays(prev => prev[dateKey] ? {} : { [dateKey]: true });
   };
 
   // AI State
@@ -723,11 +728,12 @@ export default function App() {
   };
 
   const formatTimeHuman = (seconds: number) => {
+    if (!isFinite(seconds) || isNaN(seconds)) return '--';
     const s_val = Math.max(0, seconds);
     const h = Math.floor(s_val / 3600);
     const m = Math.floor((s_val % 3600) / 60);
-    if (h > 0) return `${h}H ${m}MIN`;
-    return `${m}MIN`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
   };
 
   const handleLogin = async () => {
@@ -1072,7 +1078,7 @@ ${importText}
   const recalculateShiftTotals = async (shiftId: string) => {
     try {
       const tripsRef = collection(db, 'shifts', shiftId, 'trips');
-      const q = query(tripsRef);
+      const q = query(tripsRef, where('userId', '==', user?.uid));
       const snap = await getDocs(q);
       
       let totalTrips = 0;
@@ -1113,6 +1119,19 @@ ${importText}
       }
     } catch (err) {
       console.error('Error recalculating shift totals:', err);
+    }
+  };
+
+  const setDailyGoal = async (revenue: number, hours: number) => {
+    if (!activeShift) return;
+    try {
+      await updateDoc(doc(db, 'shifts', activeShift.id), {
+        goalRevenue: revenue,
+        goalSeconds: hours * 3600
+      });
+      setShowDailyGoalModal(false);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
     }
   };
 
@@ -1325,7 +1344,8 @@ ${importText}
         durationSeconds: 0,
         distanceKm: 0,
         startTime: serverTimestamp(),
-        timestamp: serverTimestamp()
+        timestamp: serverTimestamp(),
+        isComplete: false
       });
       
       await updateDoc(doc(db, 'shifts', activeShift.id), {
@@ -1867,47 +1887,6 @@ ${importText}
 
 
 
-  const generateRealtimeAiAnalysis = async () => {
-    if (!user || !activeShift) return;
-    setIsGeneratingRealtimeAi(true);
-    try {
-      const apiKeyToUse = settings?.geminiApiKey || process.env.GEMINI_API_KEY;
-      if (!apiKeyToUse) {
-        alert("Configure sua chave AI nos Ajustes");
-        return;
-      }
-      
-      const activeAi = new GoogleGenAI({ apiKey: apiKeyToUse });
-      const stats = {
-        faturamento: activeShift.totalRevenue,
-        tempo: elapsedTime / 3600,
-        rph: activeShift.totalRevenue / (elapsedTime / 3600 || 1),
-        meta: settings?.monthlyNetGoal || 0,
-        progresso: todayMetrics.totalRevenue
-      };
-
-      const prompt = `Analise o turno atual deste motorista: ${JSON.stringify(stats)}. 
-      Dê um diagnóstico curto, um filtro de estratégia e um plano de ação. 
-      Responda APENAS em JSON: {"diag": "...", "filter": "...", "plan": "...", "tier": "ruim|mediano|bom|otimo"}`;
-
-      const response = await activeAi.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt
-      });
-      
-      const text = response.text || '';
-      const cleaned = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
-      setRealtimeAiReport(parsed);
-      setShowRealtimeAiModal(true);
-    } catch (err) {
-      console.error(err);
-      setRealtimeAiReport({ diag: "Erro de comunicação com a IA.", filter: "", plan: "", tier: "ruim" });
-    } finally {
-      setIsGeneratingRealtimeAi(false);
-    }
-  };
-
   // --- Calculations ---
 
 
@@ -2165,6 +2144,77 @@ ${importText}
     };
   }, [fixedExpenses, settings, fuelRecords, shifts, activeShift, expenses]);
 
+  const generateRealtimeReportLocal = useCallback(() => {
+    if (!activeShift) return;
+    const metaR = activeShift.goalRevenue || planningMetrics?.dailyNeeded || 0;
+    const stats = {
+      faturamento: todayMetrics.totalRevenue,
+      tempo: todayMetrics.totalTime / 3600,
+      rph: todayMetrics.currentRph,
+      meta: metaR,
+      metaTempo: activeShift.goalSeconds ? activeShift.goalSeconds / 3600 : null,
+      rpkm: todayMetrics.currentRpkm
+    };
+
+    let tier = 'ruim';
+    let plan = '';
+
+    if (stats.tempo < 0.5) {
+       tier = 'mediano';
+       plan = 'Turno no início. Aqueça o aplicativo e busque áreas de maior demanda.';
+    } else if (stats.metaTempo) {
+       const targetRph = stats.meta / stats.metaTempo;
+       if (stats.rph < targetRph - 3) {
+          tier = 'ruim';
+          plan = `Abaixo da meta. Faturando R$${stats.rph.toFixed(0)}/h (Meta: R$${targetRph.toFixed(0)}/h). Avalie se o local está bom.`;
+       } else if (stats.rph >= targetRph - 3 && stats.rph <= targetRph + 3) {
+          tier = 'mediano';
+          plan = `Dentro da meta. Com R$${stats.rph.toFixed(0)}/h, você busca R$${targetRph.toFixed(0)}/h. Continue assim.`;
+       } else {
+          tier = 'bom';
+          plan = `Ótimo ritmo! Você faz R$${stats.rph.toFixed(0)}/h, superando a meta de R$${targetRph.toFixed(0)}/h.`;
+       }
+    } else {
+       if (stats.rph >= 48) {
+          tier = 'otimo';
+          plan = 'Excelente Ritmo! Continue com essa estratégia de seleção, está perfeita.';
+       } else if (stats.rph >= 42) {
+          tier = 'bom';
+          plan = 'Turno muito bom. Mantenha o padrão e evite corridas longas em trânsito.';
+       } else if (stats.rph >= 36) {
+          tier = 'mediano';
+          plan = 'Ritmo mediano. Tente ser mais seletivo e observe dinâmicas ou locais com mais chamados curtos.';
+       } else if (stats.rph >= 32) {
+          tier = 'ruim';
+          plan = 'Atenção ao R$/h. Evite corridas abaixo de R$ 2,00/km para recuperar a margem do turno.';
+       } else {
+          tier = 'ruim';
+          plan = 'Ganhos em alerta. Desloque-se para a zona de maior movimento ou pause para reduzir custo operacinal.';
+       }
+    }
+
+    if (stats.faturamento >= stats.meta && stats.meta > 0) {
+       plan = 'Meta do dia atingida! Todo o lucro agora é saldo extra, você pode escolher se recolher ou continuar.';
+       tier = 'otimo';
+    }
+
+    setRealtimeAiReport({
+       diag: '', filter: '', plan, tier: tier as 'ruim' | 'mediano' | 'bom' | 'otimo'
+    });
+  }, [activeShift, todayMetrics.totalRevenue, todayMetrics.totalTime, todayMetrics.currentRph, todayMetrics.currentRpkm, planningMetrics?.dailyNeeded]);
+
+  useEffect(() => {
+     if (activeShift?.status === 'active' && todayMetrics.totalTime > 0) {
+        // Debounce or update every 5 minutes/when significant changes happen
+        const interval = setInterval(() => {
+           generateRealtimeReportLocal();
+        }, 60000); // 1 min update
+        // Initial setup
+        generateRealtimeReportLocal();
+        return () => clearInterval(interval);
+     }
+  }, [activeShift?.status, todayMetrics.totalTime, generateRealtimeReportLocal]);
+
   const goalsProjection = useMemo(() => {
     if (!settings) return null;
     const now = new Date();
@@ -2384,300 +2434,165 @@ ${importText}
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    {activeShift.status === 'active' ? (
-                      <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-5 font-bold uppercase tracking-wider text-xs bg-[#1F2937] hover:bg-gray-700 text-white border-none rounded-2xl" icon={Pause}>
-                        Pausar
+                  <div className="flex flex-col gap-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      {activeShift.status === 'active' ? (
+                        <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-5 font-bold uppercase tracking-wider text-xs bg-[#1F2937] hover:bg-gray-700 text-white border-none rounded-2xl" icon={Pause}>
+                          Pausar
+                        </Button>
+                      ) : (
+                        <Button onClick={() => setShowResumeModal(true)} className="py-5 font-bold uppercase tracking-wider text-xs bg-green-600 hover:bg-green-500 text-white border-none rounded-2xl" icon={Play}>
+                          Retomar
+                        </Button>
+                      )}
+                      <Button onClick={() => setShowFinishModal(true)} variant="danger" className="py-5 font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-500 text-white border-none shadow-[0_0_15px_rgba(239,68,68,0.3)] rounded-2xl" icon={Square}>
+                        Finalizar
                       </Button>
-                    ) : (
-                      <Button onClick={() => setShowResumeModal(true)} className="py-5 font-bold uppercase tracking-wider text-xs bg-green-600 hover:bg-green-500 text-white border-none rounded-2xl" icon={Play}>
-                        Retomar
+                    </div>
+                    {activeShift.status === 'active' && (
+                      <Button onClick={() => setShowDailyGoalModal(true)} variant="outline" className="py-2.5 font-bold uppercase tracking-wider text-xs border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 rounded-xl" icon={Target}>
+                        {activeShift.goalRevenue ? 'Editar Meta do Dia' : 'Definir Meta do Dia'}
                       </Button>
                     )}
-                    <Button onClick={() => setShowFinishModal(true)} variant="danger" className="py-5 font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-500 text-white border-none shadow-[0_0_15px_rgba(239,68,68,0.3)] rounded-2xl" icon={Square}>
-                      Finalizar
-                    </Button>
                   </div>
                 )}
               </div>
 
               <div className={cn(
-                "relative overflow-hidden rounded-3xl transition-all duration-500 border p-6",
+                "relative overflow-hidden rounded-[32px] transition-all duration-500 border p-6 flex flex-col",
                 activeShift?.status === 'active' 
-                  ? "bg-gradient-to-b from-[#0B0F14] to-[#111827] border-green-500/20 shadow-[0_0_40px_rgba(37,99,235,0.05)]" 
+                  ? "bg-gradient-to-b from-gray-900 to-black border-white/10 shadow-2xl" 
                   : "bg-white dark:bg-[#0B0F14] border-gray-200 dark:border-[#1F2937]"
               )}>
                 {activeShift?.status === 'active' && (
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-green-500/10 blur-3xl rounded-full" />
+                  <div className={cn("absolute top-0 right-0 w-40 h-40 blur-[80px] rounded-full opacity-40 pointer-events-none transition-all duration-1000", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).bg.replace('/10', '') : "bg-white/10")} />
                 )}
                 
                 <div className="flex justify-between items-start mb-6 relative z-10">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      {activeShift?.status === 'active' && (
-                        <span className="flex w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.8)]" />
-                      )}
-                      <h2 className="text-[11px] font-black uppercase tracking-widest text-gray-500">
-                        Status da Operação
-                      </h2>
-                    </div>
-                    <p className={cn("text-2xl font-black mt-1", activeShift?.status === 'active' ? "text-white" : "text-gray-900 dark:text-gray-400")}>
+                  <div className="flex items-center gap-2 mb-1">
+                    {activeShift?.status === 'active' && (
+                      <span className={cn("flex w-2.5 h-2.5 rounded-full animate-pulse shadow-[0_0_8px_currentColor]", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).color : "text-gray-400 bg-gray-400")} />
+                    )}
+                    <h2 className="text-[11px] font-black uppercase tracking-widest text-gray-500">
                       {activeShift ? (activeShift.status === 'active' ? 'Em Andamento' : 'Pausado') : 'Offline'}
-                    </p>
+                    </h2>
                   </div>
-                  <div className={cn("p-3.5 rounded-2xl shadow-sm border", activeShift?.status === 'active' ? "bg-white/5 border-white/10 backdrop-blur-md text-green-400" : "bg-gray-100 dark:bg-[#1F2937] border-transparent text-gray-400")}>
-                    <Timer size={24} />
-                  </div>
+                  {activeShift?.status === 'active' && todayMetrics.currentRph > 0 && (
+                     <div className={cn("px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border transition-colors duration-500", getRphTier(todayMetrics.currentRph).bg, getRphTier(todayMetrics.currentRph).color, getRphTier(todayMetrics.currentRph).border)}>
+                        {getRphTier(todayMetrics.currentRph).label}
+                     </div>
+                  )}
                 </div>
 
-                <div className="text-center py-5 relative z-10">
-                  <div className={cn(
-                    "text-5xl sm:text-6xl leading-none font-mono font-black tracking-tighter mb-2",
-                    activeShift?.status === 'active' ? "text-white drop-shadow-md" : "text-gray-900 dark:text-gray-300"
-                  )}>
-                    {formatTime(elapsedTime)}
-                  </div>
-                  <p className="text-xs uppercase tracking-widest font-bold text-gray-400">Tempo Ativo de Direção</p>
+                <div className="text-center py-2 relative z-10">
+                  <p className={cn("text-6xl sm:text-7xl font-black tracking-tighter mb-1", activeShift?.status === 'active' ? "text-white" : "text-gray-900 dark:text-gray-300")}>
+                    <span className="text-3xl opacity-50 mr-1 tracking-normal">R$</span>
+                    {todayMetrics.totalRevenue.toFixed(2)}
+                  </p>
+                  <p className="text-sm font-bold text-gray-400 font-mono tracking-widest">
+                    {formatTime(elapsedTime)} <span className="opacity-50">ATIVO</span>
+                  </p>
                 </div>
 
                 {activeShift?.status === 'active' && (
-                  <div className="mt-8 relative z-10">
+                  <div className="grid grid-cols-2 gap-3 mt-8 relative z-10">
+                     <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
+                        <p className="text-[10px] uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / Hora</p>
+                        <p className={cn("text-2xl font-black transition-colors duration-500", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).color : "text-white")}>
+                           {todayMetrics.currentRph.toFixed(2)}
+                        </p>
+                     </div>
+                     <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
+                        <p className="text-[10px] uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / KM</p>
+                        <p className="text-2xl font-black text-white">
+                           {todayMetrics.currentRpkm.toFixed(2)}
+                        </p>
+                     </div>
+                  </div>
+                )}
+                
+                {activeShift?.status === 'active' && (
+                  <div className="text-center mt-4 mb-2 relative z-10">
+                    <p className="text-xs font-bold text-gray-500 uppercase tracking-widest"><span className="text-gray-400">{todayMetrics.totalWorkKm.toFixed(1)}</span> KM RODADOS</p>
+                  </div>
+                )}
+
+                {activeShift?.status === 'active' && (
+                   <div className="mt-6 pt-6 border-t border-white/10 relative z-10">
+                      <div className="flex justify-between items-center mb-2 text-xs font-medium">
+                         <span className="text-gray-400">Meta: <span className="text-white font-bold">R$ {((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)).toFixed(2)}</span></span>
+                         {todayMetrics.totalRevenue < ((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) ? (
+                            <span className="text-red-400 font-bold">Falta: R$ {(((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) - todayMetrics.totalRevenue).toFixed(2)}</span>
+                         ) : (
+                            <span className="text-green-400 font-bold">Meta Atingida!</span>
+                         )}
+                      </div>
+                      <div className="h-2 rounded-full bg-white/5 overflow-hidden w-full relative mb-3">
+                         <div 
+                           className={cn("h-full absolute left-0 top-0 transition-all rounded-full", todayMetrics.totalRevenue >= ((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) ? "bg-green-500" : "bg-white")}
+                           style={{ width: `${Math.min(100, (todayMetrics.totalRevenue / ((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 1))) * 100)}%` }} 
+                         />
+                      </div>
+                      {todayMetrics.totalRevenue > 0 && todayMetrics.totalRevenue < ((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) && todayMetrics.totalTime > 0 && (
+                         <div className="text-center">
+                            <p className="text-[10px] text-gray-400 uppercase tracking-widest">
+                               No ritmo atual (<span className="text-white">{todayMetrics.currentRph.toFixed(0)}/h</span>): ETA <span className="font-bold text-white">+{formatTimeHuman((((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) - todayMetrics.totalRevenue) / (todayMetrics.currentRph / 3600))}</span>
+                            </p>
+                         </div>
+                      )}
+                      
+                      {activeShift?.goalSeconds && todayMetrics.totalTime > 0 && (
+                         <div className="mt-4 pt-4 border-t border-white/5">
+                            <div className="flex justify-between items-center text-xs font-medium mb-1">
+                               <span className="text-gray-400">Tempo Limite <span className="text-gray-500">({(activeShift.goalSeconds / 3600).toFixed(1)}h)</span>:</span>
+                               <span className={todayMetrics.totalTime > activeShift.goalSeconds ? 'text-red-400 font-bold' : 'text-orange-400 font-bold'}>
+                                  {todayMetrics.totalTime > activeShift.goalSeconds ? 'Tempo Esgotado' : `Restam ${formatTimeHuman(activeShift.goalSeconds - todayMetrics.totalTime)}`}
+                               </span>
+                            </div>
+                         </div>
+                      )}
+                   </div>
+                )}
+
+                {activeShift?.status === 'active' && (
+                  <div className="mt-4">
+                    <CurrentHourHistory shifts={shifts} shiftTrips={shiftTrips} currentRph={todayMetrics.currentRph} />
+                  </div>
+                )}
+
+                {activeShift?.status === 'active' && realtimeAiReport && (
+                   <div className="mt-4 p-3 rounded-xl bg-white/5 border border-white/10 relative z-10 flex gap-3">
+                      <Sparkles size={16} className={realtimeAiReport.tier === 'otimo' || realtimeAiReport.tier === 'bom' ? 'text-green-400 mt-0.5' : 'text-orange-400 mt-0.5'} />
+                      <p className="text-[11px] text-white leading-relaxed font-medium">{realtimeAiReport.plan}</p>
+                   </div>
+                )}
+
+                {activeShift?.status === 'active' && (
+                  <div className="mt-6 pt-4 border-t border-white/10 relative z-10 flex gap-2">
                     <Button 
                       onClick={() => setShowQuickTripModal(true)} 
                       variant="outline"
-                      className="w-full py-7 text-lg font-black tracking-wide uppercase border border-green-500/30 transition-all duration-300 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-2xl shadow-[0_0_20px_rgba(34,197,94,0.15)] hover:shadow-[0_0_30px_rgba(34,197,94,0.4)]" 
+                      className="flex-1 py-7 text-lg font-black tracking-wide uppercase border border-green-500/30 transition-all duration-300 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white rounded-2xl" 
                       icon={Plus}
                     >
-                      Nova Corrida
+                      Corrida
                     </Button>
+                    <Button 
+                      onClick={() => setShowPartialRevenueModal(true)} 
+                      variant="outline" 
+                      className="py-7 px-5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white rounded-2xl flex-shrink-0"
+                      title="Atualizar Parcial"
+                    >
+                      <Wallet size={24} />
+                    </Button>
+                    {/* Add AI generation button if report is not loading and does not exist. Or we can just use AI elsewhere? Wait, the user wants "Botão Atualizar parcial". AI is good but we need the quick AI. They asked to change the quick report. */}
                   </div>
                 )}
-
-                {activeShift?.status === 'active' && (
-                  <>
-                    <div className="grid grid-cols-2 gap-3 mt-6 relative z-10 pt-6 border-t border-white/10">
-                      <Button 
-                        onClick={() => setShowPartialRevenueModal(true)} 
-                        variant="outline" 
-                        className={cn(
-                          "w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl transition-all duration-500",
-                          elapsedTime >= 3600 && (elapsedTime % 3600) < 300 
-                            ? "animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)] border-red-500/50 bg-red-500/10 text-red-400" 
-                            : "border-white/10 bg-white/5 text-gray-300 hover:bg-white/10 hover:text-white"
-                        )}
-                        icon={Wallet}
-                      >
-                        Caixa Parcial
-                      </Button>
-                      <Button 
-                        onClick={() => generateRealtimeAiAnalysis()} 
-                        variant="outline" 
-                        className="w-full py-5 text-xs font-bold uppercase tracking-wider rounded-xl border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500 hover:text-white shadow-[0_0_15px_rgba(37,99,235,0.1)] transition-all"
-                        icon={Sparkles}
-                        disabled={isGeneratingRealtimeAi}
-                      >
-                        {isGeneratingRealtimeAi ? "Analisando..." : "Copiloto IA"}
-                      </Button>
-                    </div>
-                    
-                    {realtimeAiReport && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: 10, height: 0 }} 
-                        animate={{ opacity: 1, y: 0, height: 'auto' }} 
-                        className={cn(
-                          "mt-4 p-4 rounded-2xl border flex flex-col gap-3 relative z-10",
-                          realtimeAiReport.tier === 'otimo' ? 'bg-blue-500/10 border-blue-500/20' :
-                          realtimeAiReport.tier === 'bom' ? 'bg-green-500/10 border-green-500/20' :
-                          realtimeAiReport.tier === 'mediano' ? 'bg-orange-500/10 border-orange-500/20' :
-                          'bg-red-500/10 border-red-500/20'
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                             <Sparkles size={16} className={cn(
-                                 realtimeAiReport.tier === 'otimo' ? 'text-blue-400' :
-                                 realtimeAiReport.tier === 'bom' ? 'text-green-400' :
-                                 realtimeAiReport.tier === 'mediano' ? 'text-orange-400' :
-                                 'text-red-400'
-                             )} />
-                             <span className={cn(
-                               "text-[10px] uppercase font-black tracking-widest",
-                                 realtimeAiReport.tier === 'otimo' ? 'text-blue-400' :
-                                 realtimeAiReport.tier === 'bom' ? 'text-green-400' :
-                                 realtimeAiReport.tier === 'mediano' ? 'text-orange-400' :
-                                 'text-red-400'
-                             )}>Análise em Tempo Real</span>
-                          </div>
-                          <button onClick={() => setRealtimeAiReport(null)} className="text-gray-400 hover:text-white">
-                             <X size={14} />
-                          </button>
-                        </div>
-                        
-                        <div className="space-y-2">
-                          <p className="text-xs text-white leading-relaxed">
-                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🎯 Diag:</span> 
-                            {realtimeAiReport.diag}
-                          </p>
-                          <p className="text-xs text-white leading-relaxed">
-                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🚀 Filtro:</span> 
-                            {realtimeAiReport.filter}
-                          </p>
-                          <p className="text-xs text-white leading-relaxed">
-                            <span className="font-bold opacity-70 uppercase text-[10px] mr-1">🚦 Plano:</span> 
-                            <span className="font-black">{realtimeAiReport.plan}</span>
-                          </p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              {settings && planningMetrics && (
-                <div className="bg-gradient-to-br from-indigo-900 via-[#0B0F14] to-black rounded-3xl p-6 border border-indigo-500/20 shadow-xl overflow-hidden relative">
-                  {/* Decorative faint glow */}
-                  <div className="absolute -top-24 -right-24 w-64 h-64 bg-indigo-500/10 blur-[60px] rounded-full pointer-events-none" />
-                  
-                  <h3 className="text-[11px] font-black text-indigo-300/80 uppercase tracking-widest mb-6 flex items-center gap-2">
-                    <Target size={12} className="text-indigo-400" /> Meta Diária Agressiva
-                  </h3>
-                  
-                  <div className="space-y-6 relative z-10">
-                    <div className="flex justify-between items-end mb-2">
-                      <div>
-                        <p className={cn("text-5xl font-black leading-none tracking-tighter", (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 ? "text-green-400 drop-shadow-[0_0_15px_rgba(74,222,128,0.5)]" : "text-white")}>
-                          {Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100).toFixed(0)}<span className="text-2xl text-indigo-300 ml-1 opacity-60">%</span>
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-bold text-indigo-300/80 uppercase tracking-widest mb-1.5">Progresso Real</p>
-                        <p className="font-bold text-sm text-white bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
-                          <span className="text-green-400">R$ {todayMetrics.totalRevenue.toFixed(2)}</span> <span className="text-indigo-400 opacity-60 mx-1">/</span> <span className="text-indigo-200">R$ {planningMetrics.dailyNeeded.toFixed(2)}</span>
-                        </p>
-                      </div>
-                    </div>
-                    
-                    <div className="relative pt-2 pb-1">
-                       <div className="h-6 rounded-full bg-black/60 w-full overflow-hidden relative border border-indigo-500/20 backdrop-blur-sm">
-                         {/* Track Grid */}
-                         <div className="absolute inset-0 w-full flex pointer-events-none">
-                            {[25, 50, 75].map(mark => (
-                              <div key={mark} className="flex-1 border-r border-indigo-400/20 z-20 last:border-0" />
-                            ))}
-                         </div>
-                         
-                         {/* Progress Fill */}
-                         <motion.div 
-                           initial={{ width: 0 }}
-                           animate={{ width: `${Math.min(100, (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) * 100)}%` }}
-                           transition={{ duration: 1.5, type: "spring", stiffness: 40 }}
-                           className={cn(
-                             "h-full absolute left-0 top-0 bottom-0 z-10 transition-colors duration-500 rounded-full", 
-                             (todayMetrics.totalRevenue / planningMetrics.dailyNeeded) >= 1 
-                               ? "bg-gradient-to-r from-green-500 to-green-400 shadow-[0_0_20px_rgba(74,222,128,0.5)]" 
-                               : "bg-gradient-to-r from-indigo-500 to-indigo-400"
-                           )}
-                         >
-                            <div className="absolute inset-0 bg-white/30" style={{ transform: 'skewX(-20deg)', width: '200%', animation: 'slide-right 2s linear infinite' }} />
-                         </motion.div>
-                       </div>
-                    </div>
-                    
-                    <div className="bg-indigo-950/40 p-4 rounded-2xl border border-indigo-500/20 backdrop-blur-md">
-                      <p className="text-[11px] text-indigo-200 font-medium leading-relaxed uppercase tracking-wide">
-                        <span className="text-green-400 font-black">Faltam R$ {Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue).toFixed(2)}</span> para o green. 
-                        {todayMetrics.totalTime > 0 && todayMetrics.totalRevenue > 0 ? (
-                           <> No ritmo atual de <span className="text-white font-bold bg-indigo-500/30 px-1.5 py-0.5 rounded text-[10px]">R$ {(todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)).toFixed(2)}/h</span>, meta atingida em <span className="font-black text-white">{formatTimeHuman(Math.max(0, planningMetrics.dailyNeeded - todayMetrics.totalRevenue) / ((todayMetrics.totalRevenue / (todayMetrics.totalTime / 3600)) / 3600))}</span>.</>
-                        ) : ' Inicie o trajeto para prever ETA de lucro.'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Resumo do Dia */}
-              <div className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-200 dark:border-[#1F2937] shadow-sm relative overflow-hidden flex flex-col">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-gray-200 via-gray-300 to-gray-200 dark:from-gray-800 dark:via-gray-700 dark:to-gray-800" />
-                
-                <div className="p-6 pb-4">
-                   <h3 className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-6">Desempenho Real (Dia)</h3>
-                   <div className="grid grid-cols-2 gap-4">
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><DollarSign size={12} className="text-gray-400" /> Ganhos</p>
-                        <p className="text-2xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.totalRevenue.toFixed(2)}</p>
-                     </div>
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Clock size={12} className="text-gray-400" /> Tempo</p>
-                        <p className="text-2xl font-black text-gray-900 dark:text-white">{formatTime(todayMetrics.totalTime)}</p>
-                     </div>
-                     
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <div className="flex gap-2 items-center mb-2">
-                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><Activity size={12} className="text-gray-400" /> R$ / Hora</p>
-                        </div>
-                        <p className={cn("text-xl font-black mb-1.5", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).color : "text-gray-900 dark:text-white")}>
-                          R$ {todayMetrics.currentRph.toFixed(2)}
-                        </p>
-                        {todayMetrics.currentRph > 0 && <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase inline-block", getRphTier(todayMetrics.currentRph).bg, getRphTier(todayMetrics.currentRph).color)}>{getRphTier(todayMetrics.currentRph).label}</span>}
-                     </div>
-                     
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <div className="flex gap-2 items-center mb-2">
-                          <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><MapPin size={12} className="text-gray-400" /> R$ / KM</p>
-                        </div>
-                        <p className={cn("text-xl font-black mb-1.5", todayMetrics.currentRpkm > 0 ? getRpkmTier(todayMetrics.currentRpkm).color : "text-gray-900 dark:text-white")}>
-                          R$ {todayMetrics.currentRpkm.toFixed(2)}
-                        </p>
-                        {todayMetrics.currentRpkm > 0 && <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded-sm uppercase inline-block", getRpkmTier(todayMetrics.currentRpkm).bg, getRpkmTier(todayMetrics.currentRpkm).color)}>{getRpkmTier(todayMetrics.currentRpkm).label}</span>}
-                     </div>
-                     
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Users size={12} className="text-gray-400" /> Corridas</p>
-                        <p className="text-xl font-black text-gray-900 dark:text-white">{todayMetrics.totalTrips}</p>
-                     </div>
-                     
-                     <div className="bg-gray-50 dark:bg-black/20 p-4 rounded-2xl border border-gray-100 dark:border-white/5">
-                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1.5"><Wallet size={12} className="text-gray-400" /> Ticket Méd.</p>
-                        <p className="text-xl font-black text-green-600 dark:text-green-500">R$ {todayMetrics.avgTripValue.toFixed(2)}</p>
-                     </div>
-                   </div>
-                   
-                   <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800">
-                     <div className="flex items-center justify-between mb-2">
-                       <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5"><TrendingUp size={12} /> Trabalho Realizado</p>
-                       <span className="text-[10px] font-bold text-gray-400">{todayMetrics.startKm > 0 ? todayMetrics.startKm : '--'} km inicial ➔ {todayMetrics.maxKm > 0 ? todayMetrics.maxKm : '--'} km atual</span>
-                     </div>
-                     <p className="text-2xl font-black text-gray-900 dark:text-white">{todayMetrics.totalWorkKm.toFixed(1)} <span className="text-sm font-bold text-gray-400 uppercase">km</span></p>
-                   </div>
-                </div>
-                
-                {todayMetrics.currentRph > 0 && todayMetrics.currentRpkm > 0 && (
-                   <div className="px-6 pb-6 mt-auto">
-                     <LiveShiftAnalysis 
-                       currentRph={todayMetrics.currentRph} 
-                       currentRpkm={todayMetrics.currentRpkm} 
-                       avgRph={planningMetrics?.avgRph || 0}
-                       avgRpkm={planningMetrics?.avgRpkm || 0}
-                       activeShift={activeShift}
-                       trips={activeShift ? (shiftTrips[activeShift.id] || []) : []}
-                     />
-                   </div>
-                )}
-              </div>
-
+              </div>                   
               {activeShift?.status === 'active' && (
                 <Button onClick={() => setShowShiftFuelModal(true)} variant="outline" className="w-full py-6 font-bold uppercase tracking-wider text-xs bg-white dark:bg-[#0B0F14] border-gray-200 dark:border-[#1F2937] text-gray-500 dark:text-gray-400 hover:text-white hover:bg-gray-800 rounded-2xl transition-all" icon={FuelIcon}>
                   Abastecer no Turno
                 </Button>
-              )}
-
-              {activeShift && (
-                <Card className="border-dashed border-2 bg-gray-50/50">
-                  <div className="flex items-center gap-3 text-gray-500">
-                    <AlertCircle size={20} />
-                    <p className="text-sm font-medium">Lembre-se de registrar suas corridas no final do turno para insights precisos.</p>
-                  </div>
-                </Card>
               )}
 
               {/* Maintenance Alerts */}
@@ -2817,65 +2732,117 @@ ${importText}
                 groupedShifts.map(group => {
                   const dateKey = format(group.date, 'yyyy-MM-dd');
                   const isExpanded = !!expandedDays[dateKey]; // Default to collapsed
+                  
+                  // Compute trip completion
+                  const allTrips = group.shifts.flatMap(s => shiftTrips[s.id] || []);
+                  const totalExpectedDayTrips = group.shifts.reduce((sum, s) => sum + (s.totalTrips || 0), 0);
+                  
+                  // Evaluate trips
+                  const completedTrips = allTrips.filter(t => t.isCancelled || (t.distanceKm > 0 && t.durationSeconds > 0)).length;
+                  const registeredTrips = allTrips.length;
+                  const incompleteTrips = registeredTrips - completedTrips;
+                  const totalDisplayTrips = Math.max(totalExpectedDayTrips, registeredTrips);
+
                   const rph = group.totalTime > 0 ? group.totalRevenue / (group.totalTime / 3600) : 0;
                   const rpkm = group.totalWorkKm > 0 ? group.totalRevenue / group.totalWorkKm : 0;
                   
-                  // Day Trip Completeness Check
-                  const totalExpectedDayTrips = group.shifts.reduce((sum, s) => sum + (s.totalTrips || 0), 0);
-                  const totalRegisteredDayTrips = group.shifts.reduce((sum, s) => sum + ((shiftTrips[s.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length), 0);
+                  let dayTripStatusColor = "bg-[#22C55E]/10 text-[#22C55E] border-[#22C55E]/20";
+                  let dayTripStatusText = "Precisão Alta";
                   
-                  let dayTripStatusColor = null;
-                  let dayTripStatusTitle = "";
-                  if (totalExpectedDayTrips > 0 || totalRegisteredDayTrips > 0) {
-                    if (totalRegisteredDayTrips >= totalExpectedDayTrips && totalExpectedDayTrips > 0) {
-                       dayTripStatusColor = "bg-green-500 shadow-[0_0_6px_rgba(34,197,94,0.6)]";
-                       dayTripStatusTitle = "Todas corridas detalhadas";
-                    } else {
-                       dayTripStatusColor = "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]";
-                       dayTripStatusTitle = "Falta detalhar corridas";
-                    }
-                  } else if (group.totalRevenue > 0) {
-                       dayTripStatusColor = "bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]";
-                       dayTripStatusTitle = "Falta detalhar corridas";
+                  if (incompleteTrips > 0 || registeredTrips < totalExpectedDayTrips) {
+                     dayTripStatusColor = "bg-orange-500/10 text-orange-500 border-orange-500/20";
+                     dayTripStatusText = "Faltam detalhes";
+                  } else if (totalDisplayTrips === 0 && group.totalRevenue > 0) {
+                     dayTripStatusColor = "bg-red-500/10 text-red-500 border-red-500/20";
+                     dayTripStatusText = "Sem corridas";
                   }
 
                   return (
                     <div key={dateKey} className="mb-4">
                       <div 
-                        className={cn("bg-white dark:bg-[#1a2133]/90 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.02)] border border-gray-100 dark:border-gray-800/60 rounded-[28px] overflow-hidden cursor-pointer transition-all duration-400 group", isExpanded ? "ring-2 ring-[#22C55E]/20" : "hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] hover:border-gray-200 dark:hover:border-gray-700")}
+                        className={cn("bg-white dark:bg-[#1a2133] shadow-sm border border-gray-100 dark:border-gray-800/60 rounded-[28px] overflow-hidden cursor-pointer transition-all duration-300 active:scale-[0.98]", isExpanded ? "ring-2 ring-indigo-500/20" : "")}
                         onClick={() => toggleDay(dateKey)}
                       >
-                        <div className="p-5 sm:p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                          <div className="flex items-center gap-4 w-full">
-                            <div className={cn("w-2 h-16 rounded-full shrink-0 shadow-sm", dayTripStatusColor || 'bg-green-500/30')} title={dayTripStatusTitle} />
-                            <div className="flex-1">
-                              <p className="text-xl sm:text-2xl font-black dark:text-white capitalize flex items-center gap-2 mb-1">
-                                {format(group.date, "EEEE, d", { locale: ptBR })} 
-                                <span className="text-gray-400 dark:text-gray-500 font-bold text-sm tracking-widest uppercase">
-                                  {format(group.date, "MMMM", { locale: ptBR })}
-                                </span>
-                              </p>
-                              <div className="flex flex-wrap items-center gap-x-2 sm:gap-x-4 gap-y-2">
-                                <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/60 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-gray-500 dark:text-gray-400">
-                                  <Clock size={12} /> {formatTime(group.totalTime)}
-                                </div>
-                                <div className="flex items-center gap-1.5 bg-green-50 dark:bg-[#22C55E]/10 border border-green-100 dark:border-[#22C55E]/20 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase text-green-600 dark:text-[#22C55E]">
-                                  <DollarSign size={12} /> R$ {group.totalRevenue.toFixed(2)}
-                                </div>
-                                <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase", getRphTier(rph).bg, getRphTier(rph).color)}>
-                                  <TrendingUp size={12} /> R$ {rph.toFixed(2)}/h
-                                </div>
-                                <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-black tracking-widest uppercase", getRpkmTier(rpkm).bg, getRpkmTier(rpkm).color)}>
-                                  <MapPin size={12} /> R$ {rpkm.toFixed(2)}/km
-                                </div>
+                        <div className="p-5 sm:p-6 flex flex-col gap-4">
+                          {/* Header: Date and Accuracy Badge */}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center justify-between mb-1">
+                              <div className={cn("px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 shrink-0", dayTripStatusColor)}>
+                                {(incompleteTrips > 0 || registeredTrips < totalExpectedDayTrips || totalDisplayTrips === 0) ? <AlertCircle size={10} /> : <CheckCircle2 size={10} />}
+                                {dayTripStatusText}
                               </div>
                             </div>
+                            <p className="text-2xl font-black dark:text-white capitalize leading-tight">
+                              {format(group.date, "EEEE, d", { locale: ptBR })}
+                              <span className="text-gray-400 dark:text-gray-500 font-bold text-xs tracking-widest uppercase ml-2">
+                                {format(group.date, "MMMM", { locale: ptBR })}
+                              </span>
+                            </p>
                           </div>
-                          <div className="w-full sm:w-auto flex justify-end">
-                            <div className={cn("p-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/60 transition-transform duration-500 ease-in-out", isExpanded && "rotate-180 bg-green-50 dark:bg-green-900/20")}>
-                              <ChevronRight size={20} className={cn("text-gray-400 transition-colors", isExpanded && "text-[#22C55E]")} />
+
+                          {/* Main Stats: Revenue & Trips Summary */}
+                          <div className="flex justify-between items-end">
+                            <div>
+                              <p className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter leading-none mb-2">
+                                <span className="text-lg text-gray-400 mr-1 font-bold">R$</span>
+                                {group.totalRevenue.toFixed(2)}
+                              </p>
+                              <p className="text-xs font-bold text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 inline-flex px-2.5 py-1 rounded-lg">
+                                {totalDisplayTrips} corridas {completedTrips > 0 ? ` • ${completedTrips} completas` : ''}
+                              </p>
+                            </div>
+                            <div className={cn("p-3 rounded-2xl transition-colors", isExpanded ? "bg-indigo-50 dark:bg-indigo-500/10 text-indigo-500" : "bg-gray-50 dark:bg-gray-800/60 text-gray-400")}>
+                               <ChevronRight size={20} className={cn("transition-transform duration-300", isExpanded && "rotate-90")} />
                             </div>
                           </div>
+
+                          {/* Horizontal Tech Stats */}
+                          <div className="flex items-center gap-3 pt-4 border-t border-gray-100 dark:border-gray-800/60">
+                            <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><Clock size={10}/> Tempo</span>
+                              <span className="text-sm font-black dark:text-white tabular-nums">{formatTimeHuman(group.totalTime)}</span>
+                            </div>
+                            <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><TrendingUp size={10}/> R$/h</span>
+                              <span className="text-sm font-black dark:text-white tabular-nums">{isFinite(rph) ? `R$ ${rph.toFixed(0)}` : '--'}</span>
+                            </div>
+                            <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
+                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><MapPin size={10}/> R$/km</span>
+                              <span className="text-sm font-black dark:text-white tabular-nums">{isFinite(rpkm) ? `R$ ${rpkm.toFixed(2)}` : '--'}</span>
+                            </div>
+                          </div>
+
+                          {/* Botão de Correção (Etapa 4) */}
+                          {(incompleteTrips > 0 || registeredTrips < totalExpectedDayTrips) && (
+                            <div className="mt-4 bg-orange-50 dark:bg-orange-500/5 p-3 rounded-2xl border border-orange-100 dark:border-orange-500/20 flex items-center justify-between gap-4">
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center shrink-0">
+                                  <AlertCircle size={16} className="text-orange-500" />
+                                </div>
+                                <p className="text-xs font-bold text-orange-700 dark:text-orange-400">
+                                  {incompleteTrips > 0 ? `${incompleteTrips} ${incompleteTrips === 1 ? 'corrida incompleta' : 'corridas incompletas'}` : ''}
+                                  {incompleteTrips > 0 && registeredTrips < totalExpectedDayTrips ? ' e ' : ''}
+                                  {registeredTrips < totalExpectedDayTrips ? `${totalExpectedDayTrips - registeredTrips} ${totalExpectedDayTrips - registeredTrips === 1 ? 'pendente' : 'pendentes'}` : ''}
+                                </p>
+                              </div>
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const shiftWithIssues = group.shifts.find(s => {
+                                    const trips = shiftTrips[s.id] || [];
+                                    return trips.length < (s.totalTrips || 0) || trips.some(t => !t.isCancelled && (t.distanceKm === 0 || t.durationSeconds === 0));
+                                  });
+                                  if (shiftWithIssues) {
+                                    setExpandedShiftId(shiftWithIssues.id);
+                                    if (!isExpanded) toggleDay(dateKey);
+                                  }
+                                }}
+                                className="bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all shadow-sm shadow-orange-500/20 active:scale-95 whitespace-nowrap"
+                              >
+                                Resolver
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                       
@@ -2888,97 +2855,73 @@ ${importText}
                             className="space-y-4 overflow-hidden pt-4 px-2"
                           >
                             {group.shifts.map((shift, index) => {
-                              const shiftTripsCount = (shiftTrips[shift.id] || []).filter(t => t.durationSeconds > 0 || t.isCancelled).length;
+                              const allShiftTrips = shiftTrips[shift.id] || [];
+                              const completedShiftTrips = allShiftTrips.filter(t => t.isCancelled || (t.distanceKm > 0 && t.durationSeconds > 0)).length;
+                              const registeredShiftTrips = allShiftTrips.length;
                               const expectedTrips = shift.totalTrips || 0;
+                              const incompleteShiftTrips = registeredShiftTrips - completedShiftTrips;
+                              const totalDisplayShiftTrips = Math.max(expectedTrips, registeredShiftTrips);
                               
-                              let shiftStatusColor = null;
-                              let shiftStatusTitle = "";
-                              
-                              if (expectedTrips > 0 || shiftTripsCount > 0) {
-                                if (shiftTripsCount >= expectedTrips && expectedTrips > 0) {
-                                   shiftStatusColor = "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]";
-                                   shiftStatusTitle = "Todas corridas cadastradas";
-                                } else {
-                                   shiftStatusColor = "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]";
-                                   shiftStatusTitle = "Faltam corridas para cadastrar";
-                                }
-                              } else if (shift.totalRevenue > 0) {
-                                   shiftStatusColor = "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]";
-                                   shiftStatusTitle = "Faltam corridas para cadastrar";
+                              let shiftStatusColor = "bg-[#22C55E]/10 text-[#22C55E] border border-[#22C55E]/20";
+                              let shiftStatusTitle = "Precisão Alta";
+                              if (incompleteShiftTrips > 0 || registeredShiftTrips < expectedTrips) {
+                                  shiftStatusColor = "bg-orange-500/10 text-orange-500 border border-orange-500/20";
+                                  shiftStatusTitle = "Faltam detalhes";
+                              } else if (totalDisplayShiftTrips === 0 && shift.totalRevenue > 0) {
+                                  shiftStatusColor = "bg-red-500/10 text-red-500 border border-red-500/20";
+                                  shiftStatusTitle = "Sem corridas";
                               }
 
+                              const shiftRph = shift.activeTimeSeconds > 0 ? shift.totalRevenue / (shift.activeTimeSeconds / 3600) : 0;
+                              const shiftWorkKm = shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0;
+                              const shiftRpkm = shiftWorkKm > 0 ? shift.totalRevenue / shiftWorkKm : 0;
+
                               return (
-                              <div key={shift.id} className={cn("bg-white dark:bg-[#111827]/80 rounded-[24px] border border-gray-100 dark:border-gray-800/80 shadow-sm overflow-hidden mb-4", shiftStatusColor?.includes('green') ? 'border-l-[6px] border-l-[#22C55E]' : shiftStatusColor?.includes('red') ? 'border-l-[6px] border-l-red-500' : 'border-l-[6px] border-l-[#22C55E]')}>
-                                <div className="p-5 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a2133]/50 transition-colors" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
-                                  <div className="flex justify-between items-start mb-4">
-                                    <div className="flex items-center gap-3">
-                                      <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center shrink-0", shiftStatusColor?.includes('green') ? 'bg-green-500/10 text-green-500' : shiftStatusColor?.includes('red') ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500')}>
-                                        <Car size={18} />
-                                      </div>
-                                      <div>
-                                        <div className="flex items-center gap-2 mb-1">
-                                          {shiftStatusColor && (
-                                            <div className={cn("w-2 h-2 rounded-full shrink-0", shiftStatusColor)} title={shiftStatusTitle} />
-                                          )}
-                                          <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none">
-                                            Turno {group.shifts.length - index}
-                                          </p>
-                                        </div>
-                                        <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
-                                          <Clock size={12} className="text-gray-400" />
-                                          {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
-                                        </p>
-                                      </div>
+                              <div key={shift.id} className="bg-white dark:bg-[#111827] rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm overflow-hidden mb-4 transition-all duration-300">
+                                <div className="p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a2133]/50 transition-colors" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
+                                  <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                      <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1">
+                                        Turno {group.shifts.length - index}
+                                      </p>
+                                      <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
+                                        <Clock size={12} className="text-gray-400" />
+                                        {format(ensureDate(shift.startTime), 'HH:mm')} - {shift.endTime ? format(ensureDate(shift.endTime), 'HH:mm') : 'Agora'}
+                                      </p>
                                     </div>
-                                    
-                                    <div className="flex flex-col items-end gap-1.5">
-                                      <span className="text-xl font-black text-gray-900 dark:text-white leading-none">
+                                    <div className="text-right">
+                                      <span className="text-lg font-black text-gray-900 dark:text-white leading-none">
                                         R$ {shift.totalRevenue.toFixed(2)}
                                       </span>
-                                      <div className={cn("p-1.5 rounded-lg bg-gray-50 dark:bg-gray-800 transition-transform duration-300", expandedShiftId === shift.id && "rotate-180 bg-green-50 dark:bg-green-900/20")}>
-                                        <ChevronRight size={14} className={cn("text-gray-400", expandedShiftId === shift.id && "text-green-500")} />
-                                      </div>
                                     </div>
                                   </div>
 
-                                  <div className="flex flex-wrap gap-2 mb-4">
-                                    <div className="flex items-center gap-1.5 text-xs font-bold bg-gray-50 dark:bg-gray-800/80 text-gray-600 dark:text-gray-300 px-3 py-1.5 rounded-lg">
-                                      <Clock size={12} />
-                                      {formatTime(shift.activeTimeSeconds)}
+                                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 rounded-lg">
+                                      <Clock size={10} />
+                                      {formatTimeHuman(shift.activeTimeSeconds)}
                                     </div>
-                                    {Math.max(shift.totalTrips || 0, shiftTripsCount) > 0 && (
-                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-green-50 dark:bg-green-500/10 text-green-600 dark:text-green-400 px-3 py-1.5 rounded-lg border border-green-100 dark:border-green-500/20">
-                                        <Users size={12} />
-                                        {Math.max(shift.totalTrips || 0, shiftTripsCount)} Corridas
-                                      </div>
-                                    )}
-                                    {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) > 0 ? (
-                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-100 dark:border-indigo-500/20">
-                                        <MapPin size={12} />
-                                        {(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0).toFixed(1)} km
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center gap-1.5 text-xs font-bold bg-orange-50 dark:bg-orange-500/10 text-orange-600 dark:text-orange-400 px-3 py-1.5 rounded-lg border border-orange-100 dark:border-orange-500/20">
-                                        <AlertCircle size={12} />
-                                        Dados Incompletos
-                                      </div>
-                                    )}
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1.5 rounded-lg">
+                                      <TrendingUp size={10} />
+                                      {isFinite(shiftRph) && shiftRph > 0 ? `R$ ${shiftRph.toFixed(0)}/h` : '--/h'}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-3 py-1.5 rounded-lg">
+                                      <MapPin size={10} />
+                                      {isFinite(shiftRpkm) && shiftRpkm > 0 ? `R$ ${shiftRpkm.toFixed(2)}/km` : '--/km'}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-[11px] font-bold text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 rounded-lg">
+                                      <Users size={10} />
+                                      {totalDisplayShiftTrips} Corr.
+                                    </div>
                                   </div>
-                                  
-                                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-                                    <div className="flex items-center gap-4">
-                                      <div className={cn("flex items-center gap-1.5 text-xs font-black uppercase tracking-wider", shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? getRpkmTier(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).color : "text-gray-500")}>
-                                        {shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) > 0 ? `R$ ${(shift.totalRevenue / ((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1))).toFixed(2)}` : 'R$ 0.00'}/km
-                                      </div>
-                                      <div className="w-1.5 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-full" />
-                                      <div className={cn("flex items-center gap-1.5 text-xs font-black uppercase tracking-wider", shift.activeTimeSeconds > 0 ? getRphTier(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).color : "text-gray-500")}>
-                                        {shift.activeTimeSeconds > 0 ? `R$ ${(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}` : 'R$ 0.00'}/h
-                                      </div>
-                                    </div>
 
-                                    <div className="flex items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
+                                  <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-100 dark:border-gray-800/60">
+                                    <div className={cn("text-[10px] uppercase font-black tracking-widest px-2 py-0.5 rounded-md", shiftStatusColor)}>
+                                      {shiftStatusTitle}
+                                    </div>
+                                    <div className="flex items-center gap-2">
                                       <button 
-                                        className="flex-1 sm:flex-none h-10 px-4 flex items-center justify-center gap-2 rounded-xl bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:text-green-500 hover:bg-white dark:hover:bg-[#1F2937] transition-all font-bold text-xs uppercase tracking-wider"
+                                        className="p-1.5 rounded-lg text-gray-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setEditingShift(shift);
@@ -2986,20 +2929,18 @@ ${importText}
                                         }}
                                         title="Editar Turno"
                                       >
-                                        <Edit2 size={14} /> Editar
+                                        <Edit2 size={14} />
                                       </button>
-                                      
                                       <button 
-                                        className="flex-1 sm:flex-none h-10 px-4 flex items-center justify-center gap-2 rounded-xl bg-[#22C55E] hover:bg-[#16a34a] text-white transition-all font-bold text-xs uppercase tracking-wider shadow-sm"
+                                        className="py-1 px-3 flex items-center gap-1 rounded-lg bg-green-500 text-white font-bold text-xs uppercase tracking-wider hover:bg-green-600 transition-colors"
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedShiftId(shift.id);
                                           setInitialTripIdForSequentialForm(null);
                                           setShowTripModal(true);
                                         }}
-                                        title="Adicionar Corrida"
                                       >
-                                        <Plus size={16} strokeWidth={3} /> Corrida
+                                        <Plus size={12} strokeWidth={3} /> Corrida
                                       </button>
                                     </div>
                                   </div>
@@ -3011,162 +2952,191 @@ ${importText}
                                       initial={{ height: 0, opacity: 0 }}
                                       animate={{ height: 'auto', opacity: 1 }}
                                       exit={{ height: 0, opacity: 0 }}
-                                      className="bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-800 transition-colors"
+                                      className="bg-gray-50 dark:bg-[#1a2133]/50 border-t border-gray-100 dark:border-gray-800"
                                     >
-                                      <div className="p-4 space-y-3">
-                                        <div className="flex justify-between text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">
-                                          <span>Detalhes do Turno</span>
-                                          <span>{shift.totalTrips} Corridas</span>
+                                      <div className="p-4 space-y-4">
+                                        <div className="flex justify-between items-center text-xs font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest px-1 pt-2">
+                                          <div className="flex items-center gap-2">
+                                            <div className="w-1.5 h-4 bg-indigo-500 rounded-full" />
+                                            <span>Métricas do Turno</span>
+                                          </div>
                                         </div>
-                                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
-                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={10} />Odômetro</p>
-                                            <div className="flex items-center justify-between text-sm font-bold dark:text-gray-200">
-                                              <span>{shift.startKm}</span>
-                                              <ArrowRight size={12} className="text-gray-400" />
-                                              <span>{shift.endKm || shift.lastKm || '--'}</span>
+                                        
+                                        <div className="grid grid-cols-1 gap-3">
+                                          <div className="bg-white dark:bg-[#111827] px-5 py-4 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex items-center justify-between group/metric hover:border-indigo-100 dark:hover:border-indigo-500/20 transition-all">
+                                            <div>
+                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={10} className="text-indigo-500" />Odômetro</p>
+                                              <div className="flex items-center text-sm font-black text-gray-900 dark:text-gray-200 tabular-nums">
+                                                <span>{shift.startKm}</span>
+                                                <ArrowRight size={12} className="text-gray-400 mx-2" />
+                                                <span>{shift.endKm || shift.lastKm || '--'}</span>
+                                              </div>
                                             </div>
-                                          </div>
-                                          
-                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
-                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><TrendingUp size={10} />Distância Real</p>
-                                            <p className="text-lg font-black dark:text-white mt-auto">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} <span className="text-[10px] font-bold text-gray-500">km</span></p>
-                                          </div>
-
-                                          <div className="bg-white dark:bg-[#1F2937] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
-                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={10} />Rentabilidade</p>
-                                            <div className="space-y-2 mt-auto">
-                                              <div className="flex justify-between items-center text-sm font-bold bg-green-50/50 dark:bg-green-500/10 p-1.5 rounded-lg border border-green-100/50 dark:border-green-500/20">
-                                                <span className="text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 1)).toFixed(2)}</span>
-                                                <span className="text-[10px] text-green-500/70 border-l border-green-200 dark:border-green-800 pl-2">/ km</span>
-                                              </div>
-                                              <div className="flex justify-between items-center text-sm font-bold bg-green-50/50 dark:bg-green-500/10 p-1.5 rounded-lg border border-green-100/50 dark:border-green-500/20">
-                                                <span className="text-green-600 dark:text-green-400">R$ {(shift.totalRevenue / (shift.activeTimeSeconds / 3600)).toFixed(2)}</span>
-                                                <span className="text-[10px] text-green-500/70 border-l border-green-200 dark:border-green-800 pl-2">/ h</span>
-                                              </div>
+                                            <div className="text-right">
+                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Dist. Rodada</p>
+                                              <p className="text-base font-black text-indigo-600 dark:text-indigo-400 tabular-nums">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} km</p>
                                             </div>
                                           </div>
 
-                                          <div className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-[#1F2937] dark:to-[#111827] p-3.5 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-sm flex flex-col justify-between">
-                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5 line-clamp-1"><Activity size={10} />Consumo ({shift.avgConsumption?.toFixed(1) || '0.0'} km/L)</p>
-                                            <div className="space-y-1 mt-auto">
-                                              <div className="flex justify-between items-center text-xs text-gray-600 dark:text-gray-400 font-medium">
-                                                <span>Gasto Est.:</span>
-                                                <span className="font-bold text-gray-900 dark:text-gray-200">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)}L</span>
-                                              </div>
-                                              <div className="flex justify-between items-center text-xs text-red-500 dark:text-red-400 mt-1 pt-1 border-t border-gray-200 dark:border-gray-700">
-                                                <span>Custo:</span>
-                                                <span className="font-bold">-R$ {(((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)) * (settings?.defaultFuelPrice || 0)).toFixed(2)}</span>
-                                              </div>
+                                          <div className="bg-white dark:bg-[#111827] px-5 py-4 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex items-center justify-between group/metric hover:border-emerald-100 dark:hover:border-emerald-500/20 transition-all">
+                                            <div>
+                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={10} className="text-emerald-500" />Eficiência</p>
+                                              <p className="text-sm font-black text-gray-900 dark:text-gray-200 tabular-nums">{shift.avgConsumption?.toFixed(1) || '0.0'} km/L</p>
+                                            </div>
+                                            <div className="text-right">
+                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Total Gasto</p>
+                                              <p className="text-base font-black text-gray-900 dark:text-white tabular-nums">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)} L</p>
+                                            </div>
+                                          </div>
+
+                                          <div className="bg-red-50 dark:bg-red-950/20 px-5 py-4 rounded-3xl border border-red-100 dark:border-red-900/30 shadow-sm flex items-center justify-between">
+                                            <div>
+                                              <p className="text-[10px] text-red-600 dark:text-red-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={10} className="text-red-500" />Custo Operacional</p>
+                                              <p className="text-[9px] font-bold text-red-700/60 dark:text-red-400/60 uppercase tracking-widest">Base R$ {settings?.defaultFuelPrice?.toFixed(2) || '0.00'}/L</p>
+                                            </div>
+                                            <div className="text-right">
+                                              <p className="text-lg font-black text-red-700 dark:text-red-400 tabular-nums">- R$ {(((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)) * (settings?.defaultFuelPrice || 0)).toFixed(2)}</p>
                                             </div>
                                           </div>
                                         </div>
 
                                         {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
-                                          <div className="space-y-3 mt-6 border-t border-gray-200/50 dark:border-gray-700/50 pt-5">
-                                            <div className="flex justify-between items-center">
-                                              <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5"><MapPin size={10} /> Lista de Corridas</p>
+                                          <div className="space-y-3 mt-4 pt-4 border-t border-gray-200/50 dark:border-gray-700/50">
+                                            <div className="flex justify-between items-center mb-2">
+                                              <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5"><MapPin size={10} /> Corridas do Turno</p>
                                               <button 
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   setShiftToDeleteAllTrips(shift.id);
                                                 }}
-                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors px-2 py-1 relative z-10 bg-red-50 dark:bg-red-900/10 rounded-md border border-red-100 dark:border-red-900/30"
+                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors px-2 py-1 rounded border border-transparent hover:border-red-200 dark:hover:border-red-900"
                                               >
                                                 Apagar Todas
                                               </button>
                                             </div>
-                                            <div className="grid gap-2">
+                                            <div className="flex flex-col gap-2">
                                               {shiftTrips[shift.id].map(trip => {
                                                 const mins = Math.floor(trip.durationSeconds / 60);
                                                 const secs = Math.floor(trip.durationSeconds % 60);
                                                 const tripHour = trip.startTime ? format(ensureDate(trip.startTime), 'HH:mm') : null;
-                                                const tripRph = trip.value / (trip.durationSeconds / 3600);
+                                                const tripRph = trip.durationSeconds > 0 ? trip.value / (trip.durationSeconds / 3600) : 0;
+                                                const tripRpkm = trip.distanceKm > 0 ? trip.value / trip.distanceKm : 0;
                                                 
-                                                let bgColorClass = "bg-red-50/80 dark:bg-red-900/10 border-red-200/50 dark:border-red-900/30";
-                                                let textColorClass = "text-red-700 dark:text-red-400";
-                                                let badgeClass = "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400";
-                                                
-                                                if (trip.isCancelled) {
-                                                  bgColorClass = "bg-gray-100/50 dark:bg-[#1F2937] border-gray-200/50 dark:border-gray-700/50 opacity-75";
-                                                  textColorClass = "text-gray-500 dark:text-gray-400";
-                                                  badgeClass = "bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400";
-                                                } else if (tripRph > 42) {
-                                                  bgColorClass = "bg-green-50/80 dark:bg-green-900/10 border-green-200/50 dark:border-green-900/30"; // Verde Claro
-                                                  textColorClass = "text-green-700 dark:text-green-400 font-black";
-                                                  badgeClass = "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400";
-                                                } else if (tripRph > 37) {
-                                                  bgColorClass = "bg-emerald-50/80 dark:bg-emerald-900/10 border-emerald-200/50 dark:border-emerald-900/30"; // Verde Escuro
-                                                  textColorClass = "text-emerald-700 dark:text-emerald-400";
-                                                  badgeClass = "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400";
-                                                } else if (tripRph > 33) {
-                                                  bgColorClass = "bg-orange-50/80 dark:bg-orange-900/10 border-orange-200/50 dark:border-orange-900/30"; // Laranja
-                                                  textColorClass = "text-orange-700 dark:text-orange-400";
-                                                  badgeClass = "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400";
-                                                }
+                                                const isCancelled = trip.isCancelled;
+                                                const isComplete = trip.distanceKm > 0 && trip.durationSeconds > 0;
+                                                const isIncomplete = !isCancelled && !isComplete;
 
+                                                let statusConfig = {
+                                                  label: "Completa",
+                                                  color: "text-emerald-600 dark:text-emerald-400",
+                                                  bg: "bg-emerald-50 dark:bg-emerald-500/10",
+                                                  border: "border-emerald-100 dark:border-emerald-500/20",
+                                                  icon: <CheckCircle2 size={12} />
+                                                };
+
+                                                if (isCancelled) {
+                                                  statusConfig = {
+                                                    label: "Cancelada",
+                                                    color: "text-gray-500 dark:text-gray-400",
+                                                    bg: "bg-gray-50 dark:bg-gray-800",
+                                                    border: "border-gray-200 dark:border-gray-700",
+                                                    icon: <Ban size={12} />
+                                                  };
+                                                } else if (isIncomplete) {
+                                                  statusConfig = {
+                                                    label: "Pendente",
+                                                    color: "text-orange-600 dark:text-orange-400",
+                                                    bg: "bg-orange-50 dark:bg-orange-500/10",
+                                                    border: "border-orange-100 dark:border-orange-500/20",
+                                                    icon: <HelpCircle size={12} />
+                                                  };
+                                                }
+                                                
                                                 return (
-                                                  <div key={trip.id} className={cn("flex justify-between items-center px-4 py-3 rounded-2xl text-sm border shadow-sm transition-all relative overflow-hidden group", bgColorClass)}>
-                                                    {/* Soft background gradient overlay for styling */}
-                                                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent dark:via-black/10 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity" />
-                                                    
-                                                    <div className="flex items-center gap-3 w-full relative z-10">
-                                                      <div className="flex items-center gap-3 sm:gap-4 w-full flex-wrap sm:flex-nowrap">
-                                                         {tripHour && <span className={cn("text-xs font-bold tabular-nums w-12 shrink-0 px-2 py-1 rounded-lg text-center", badgeClass)}>{tripHour}</span>}
-                                                         
-                                                         <div className="flex flex-col">
-                                                           <span className={cn("font-black text-[15px] leading-none mb-1", textColorClass)}>R$ {trip.value.toFixed(2)}</span>
-                                                           {!trip.isCancelled && (
-                                                             <div className="flex items-center gap-2">
-                                                               <span className={cn("text-[11px] font-bold tabular-nums opacity-80", textColorClass)}>
-                                                                 {mins > 0 ? `${mins}m ` : ''}{secs}s
-                                                               </span>
-                                                               <div className="h-2 w-px bg-current opacity-20"></div>
-                                                               <span className={cn("text-[11px] font-bold tabular-nums opacity-90", textColorClass)}>
-                                                                 {trip.distanceKm ? `${trip.distanceKm.toFixed(1)} km` : '--'}
-                                                               </span>
-                                                               {trip.dynamicValue && trip.dynamicValue > 0 && (
-                                                                 <span className="text-[9px] px-1.5 py-0.5 ml-1 bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300 rounded-md font-bold shrink-0 border border-teal-200 dark:border-teal-800">
-                                                                   + R$ {trip.dynamicValue.toFixed(2)} dinâmico
-                                                                 </span>
-                                                               )}
-                                                             </div>
-                                                           )}
-                                                           {trip.isCancelled && (
-                                                             <span className={cn("text-[10px] font-black uppercase px-2 py-0.5 rounded-md mt-1 w-max border", "bg-red-500 text-white border-red-600 dark:bg-red-900/40 dark:text-red-400 dark:border-red-800")}>Cancelada</span>
-                                                           )}
-                                                         </div>
+                                                  <div key={trip.id} className={cn(
+                                                    "bg-white dark:bg-[#111827] rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm p-4 transition-all hover:border-gray-200 dark:hover:border-gray-700 group",
+                                                    isCancelled && "opacity-60 grayscale-[0.5]"
+                                                  )}>
+                                                    <div className="flex justify-between items-start mb-3">
+                                                      <div className="flex items-center gap-3">
+                                                        {tripHour && (
+                                                          <div className="bg-gray-50 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg text-[10px] font-black tabular-nums text-gray-500 dark:text-gray-400">
+                                                            {tripHour}
+                                                          </div>
+                                                        )}
+                                                        <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all group-hover:scale-105", statusConfig.bg, statusConfig.color, statusConfig.border)}>
+                                                          {statusConfig.icon}
+                                                          {statusConfig.label}
+                                                        </div>
+                                                      </div>
+                                                      
+                                                      <div className="flex items-center gap-1">
+                                                        <button 
+                                                          className="p-2 text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 rounded-xl transition-all active:scale-95"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setSelectedShiftId(shift.id);
+                                                            setInitialTripIdForSequentialForm(trip.id);
+                                                            setShowTripModal(true);
+                                                          }}
+                                                        >
+                                                          <Edit2 size={14} />
+                                                        </button>
+                                                        <button 
+                                                          className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all active:scale-95"
+                                                          onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setTripToDelete({ shiftId: shift.id, tripId: trip.id });
+                                                          }}
+                                                        >
+                                                          <X size={14} />
+                                                        </button>
                                                       </div>
                                                     </div>
-                                                    <div className="flex gap-1.5 ml-3 shrink-0 relative z-10 border-l border-current opacity-50 pl-3">
-                                                      <button 
-                                                        className="p-1.5 text-current opacity-70 hover:opacity-100 hover:bg-white/50 dark:hover:bg-black/20 rounded-xl transition-all active:scale-95"
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setSelectedShiftId(shift.id);
-                                                          setInitialTripIdForSequentialForm(trip.id);
-                                                          setShowTripModal(true);
-                                                        }}
-                                                        title="Editar Corrida"
-                                                      >
-                                                        <Edit2 size={16} />
-                                                      </button>
-                                                      <button 
-                                                        className="p-1.5 text-current opacity-70 hover:opacity-100 hover:bg-white/50 dark:hover:bg-black/20 rounded-xl transition-all active:scale-95"
-                                                        onClick={(e) => {
-                                                          e.stopPropagation();
-                                                          setTripToDelete({ shiftId: shift.id, tripId: trip.id });
-                                                        }}
-                                                        title="Apagar Corrida"
-                                                      >
-                                                        <X size={16} />
-                                                      </button>
+
+                                                    <div className="flex items-end justify-between gap-4">
+                                                      <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                          <p className={cn("text-2xl font-black tabular-nums tracking-tighter", isCancelled ? "text-gray-400 line-through" : "text-gray-900 dark:text-white leading-none")}>
+                                                            <span className="text-xs font-bold text-gray-400 dark:text-gray-500 mr-1">R$</span>
+                                                            {trip.value.toFixed(2)}
+                                                          </p>
+                                                          {(trip.dynamicValue || 0) > 0 && (
+                                                            <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-500/20 whitespace-nowrap">
+                                                              +{trip.dynamicValue.toFixed(2)} din.
+                                                            </span>
+                                                          )}
+                                                        </div>
+                                                        
+                                                        {!isCancelled && (
+                                                          <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-gray-500 dark:text-gray-400">
+                                                            <span className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 rounded-xl border border-gray-100 dark:border-gray-700/50">
+                                                              <Clock size={12} className="text-gray-400" /> {mins > 0 ? `${mins}m ` : ''}{secs}s
+                                                            </span>
+                                                            <span className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3 py-1.5 rounded-xl border border-gray-100 dark:border-gray-700/50">
+                                                              <MapPin size={12} className="text-gray-400" /> {trip.distanceKm > 0 ? `${trip.distanceKm.toFixed(1)} km` : '-- km'}
+                                                            </span>
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                      
+                                                      {!isCancelled && isComplete && (
+                                                        <div className="text-right flex flex-col items-end shrink-0">
+                                                          <p className="text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1.5">Eficiência</p>
+                                                          <div className={cn("px-3 py-2 rounded-2xl font-black text-sm border shadow-sm transition-all", getRpkmTier(tripRpkm).bg, getRpkmTier(tripRpkm).color, "border-current/10")}>
+                                                            {tripRpkm.toFixed(2)}<span className="text-[10px] ml-0.5 opacity-70">/km</span>
+                                                          </div>
+                                                        </div>
+                                                      )}
                                                     </div>
                                                   </div>
                                                 );
                                               })}
                                             </div>
                                           </div>
+                                        )}
+                                        {(incompleteShiftTrips === 0 && shift.totalRevenue > 0) && (
+                                          <HourlyBreakdown shifts={[shift]} shiftTrips={shiftTrips} />
                                         )}
                                       </div>
                                     </motion.div>
@@ -3705,6 +3675,10 @@ ${importText}
         <StartShiftForm onSubmit={startShift} initialKm={lastRecordedKm} />
       </Modal>
 
+      <Modal isOpen={showDailyGoalModal} onClose={() => setShowDailyGoalModal(false)} title="Meta do Dia">
+        <DailyGoalForm onSubmit={setDailyGoal} initialRevenue={activeShift?.goalRevenue} initialHours={activeShift?.goalSeconds ? activeShift.goalSeconds / 3600 : undefined} />
+      </Modal>
+
       <Modal isOpen={showPauseModal} onClose={() => setShowPauseModal(false)} title="Pausar Turno">
         <PauseShiftForm onSubmit={pauseShift} currentRevenue={activeShift?.totalRevenue || 0} initialKm={lastRecordedKm} />
       </Modal>
@@ -4019,33 +3993,76 @@ function NavButton({ active, onClick, icon: Icon, label }: { active: boolean, on
 }
 
 function Modal({ isOpen, onClose, title, children }: { isOpen: boolean, onClose: () => void, title: string, children: React.ReactNode }) {
-  if (!isOpen) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
-      <motion.div 
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-      />
-      <motion.div 
-        initial={{ y: "100%" }}
-        animate={{ y: 0 }}
-        exit={{ y: "100%" }}
-        className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl transition-colors max-h-[90dvh] flex flex-col"
-      >
-        <div className="w-12 h-1.5 shrink-0 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-6 sm:hidden" />
-        <h3 className="text-2xl shrink-0 font-bold mb-6 tracking-tight dark:text-white">{title}</h3>
-        <div className="overflow-y-auto -mx-2 px-2 pb-safe">
-          {children}
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="absolute inset-0 bg-black/40 backdrop-blur-md"
+          />
+          <motion.div 
+            initial={{ y: "100%", opacity: 0, scale: 0.95 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: "100%", opacity: 0, scale: 0.95 }}
+            transition={{ type: "spring", damping: 25, stiffness: 250, velocity: 2 }}
+            className="relative bg-white dark:bg-gray-900 w-full max-w-md rounded-t-[32px] sm:rounded-[32px] p-6 sm:p-8 shadow-2xl transition-colors max-h-[90dvh] flex flex-col"
+          >
+            <div className="w-12 h-1.5 shrink-0 bg-gray-200 dark:bg-gray-700 rounded-full mx-auto mb-6 sm:hidden" />
+            <div className="flex justify-between items-start mb-6 shrink-0">
+              <h3 className="text-2xl font-black tracking-tight dark:text-white leading-none">{title}</h3>
+              <button 
+                onClick={onClose}
+                className="p-2 -mr-2 bg-gray-50 dark:bg-gray-800 text-gray-400 hover:text-gray-900 dark:hover:text-white rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="overflow-y-auto -mx-2 px-2 pb-safe">
+              {children}
+            </div>
+          </motion.div>
         </div>
-      </motion.div>
-    </div>
+      )}
+    </AnimatePresence>
   );
 }
 
 // --- Forms ---
+
+function DailyGoalForm({ onSubmit, initialRevenue, initialHours }: { onSubmit: (revenue: number, hours: number) => void, initialRevenue?: number, initialHours?: number }) {
+  const [revenue, setRevenue] = useState(initialRevenue ? initialRevenue.toString() : '');
+  const [hours, setHours] = useState(initialHours ? initialHours.toString() : '');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!revenue || !hours) return;
+    setIsSubmitting(true);
+    try {
+      await onSubmit(Number(revenue), Number(hours));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <Input label="Meta R$ do Dia" type="number" value={revenue} onChange={e => setRevenue(e.target.value)} placeholder="Ex: 300" />
+      <Input label="Máximo de Horas (h)" type="number" value={hours} onChange={e => setHours(e.target.value)} placeholder="Ex: 7" />
+      <Button 
+        type="submit" 
+        disabled={isSubmitting || !revenue || !hours}
+        className="w-full py-4 text-lg font-black uppercase tracking-wide bg-indigo-600 hover:bg-indigo-500 rounded-2xl"
+      >
+        {isSubmitting ? 'Salvando...' : 'Definir Meta do Dia'}
+      </Button>
+    </form>
+  );
+}
 
 function StartShiftForm({ onSubmit, initialKm }: { onSubmit: (km: number, autonomy: number) => void, initialKm: number }) {
   const [km, setKm] = useState(initialKm ? initialKm.toString() : '');
@@ -4076,28 +4093,66 @@ function StartShiftForm({ onSubmit, initialKm }: { onSubmit: (km: number, autono
 function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
   const [value, setValue] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showOther, setShowOther] = useState(false);
   
+  const presets = [5.80, 7, 9, 11, 15];
+
+  const handleSelect = async (presetValue: number) => {
+    setIsSubmitting(true);
+    try {
+      await onSubmit(presetValue);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
-      <Button 
-        onClick={async () => {
-          if (Number(value) < 0) {
-            alert('O faturamento não pode ser negativo.');
-            return;
-          }
-          setIsSubmitting(true);
-          try {
-            await onSubmit(Number(value));
-          } finally {
-            setIsSubmitting(false);
-          }
-        }} 
-        className="w-full py-4 bg-green-600 hover:bg-green-500 text-white"
-        disabled={!value || Number(value) <= 0 || isSubmitting}
-      >
-        {isSubmitting ? 'Salvando...' : 'Salvar Nova Corrida'}
-      </Button>
+    <div className="space-y-4">
+       {!showOther ? (
+         <div className="grid grid-cols-2 gap-3">
+           {presets.map(p => (
+             <Button 
+               key={p} 
+               onClick={() => handleSelect(p)} 
+               variant="outline" 
+               className="py-6 text-xl font-black bg-gray-50 dark:bg-[#111827] border-gray-200 dark:border-[#1F2937] hover:bg-green-50 dark:hover:bg-green-900/20 hover:border-green-500/30 text-gray-900 dark:text-white"
+               disabled={isSubmitting}
+             >
+               R$ {p.toFixed(2)}
+             </Button>
+           ))}
+           <Button 
+             onClick={() => setShowOther(true)} 
+             variant="outline" 
+             className="py-6 text-sm font-bold bg-white dark:bg-[#0B0F14] border-gray-200 dark:border-[#1F2937] hover:bg-gray-50 dark:hover:bg-gray-900 text-gray-500"
+             disabled={isSubmitting}
+           >
+             Outro Valor
+           </Button>
+         </div>
+       ) : (
+         <div className="space-y-4">
+           <CurrencyInput label="Valor Estimado da Corrida (R$)" value={value} onValueChange={setValue} />
+           <Button 
+             onClick={async () => {
+               if (Number(value) < 0) {
+                 alert('O faturamento não pode ser negativo.');
+                 return;
+               }
+               setIsSubmitting(true);
+               try {
+                 await onSubmit(Number(value));
+               } finally {
+                 setIsSubmitting(false);
+               }
+             }} 
+             className="w-full py-4 bg-green-600 hover:bg-green-500 text-white"
+             disabled={!value || Number(value) <= 0 || isSubmitting}
+           >
+             {isSubmitting ? 'Salvando...' : 'Salvar Nova Corrida'}
+           </Button>
+         </div>
+       )}
     </div>
   );
 }
@@ -4242,13 +4297,13 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <CurrencyInput
-          label="Total Atualizado (R$)"
+          label="Faturamento Bruto Total (R$)"
           value={revenue}
           onValueChange={setRevenue}
           placeholder={`Ex: ${currentRevenue > 0 ? currentRevenue : '50.00'}`}
         />
         <Input 
-          label="KM Atual do Painel" 
+          label="KM do Hodômetro" 
           type="number" 
           inputMode="numeric"
           value={km} 
@@ -4700,7 +4755,8 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
         durationSeconds: sec,
         distanceKm: distVal,
         startTime: startTimeDate,
-        isCancelled
+        isCancelled,
+        isComplete: true
       };
 
       if (viewMode === 'new') {
