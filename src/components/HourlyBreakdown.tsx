@@ -48,42 +48,58 @@ export function HourlyBreakdown({ shifts, shiftTrips, title = "Ganhos por Hora" 
 
   if (hourlyData.length === 0) return null;
 
+  const maxRevenue = Math.max(...hourlyData.map(d => d.revenue));
+
   return (
-    <div className="mt-6">
-      <h3 className="text-xs uppercase font-black text-gray-500 tracking-widest mb-3 flex items-center gap-2">
-        <Clock size={14} /> {title}
+    <div className="mt-2">
+      <h3 className="text-[10px] uppercase font-black text-gray-500 tracking-widest mb-3 flex items-center gap-2">
+        <Clock size={12} /> {title}
       </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+      
+      <div className="flex items-end gap-1 h-32 w-full pt-4">
         {hourlyData.map(data => {
-          const startTimeStr = `${String(data.hour).padStart(2, '0')}:00`;
-          const endTimeStr = `${String((data.hour + 1) % 24).padStart(2, '0')}:00`;
+          const heightPct = Math.max(10, (data.revenue / maxRevenue) * 100);
           
+          let colorClass = "bg-gray-200 dark:bg-gray-800"; // Frio
+          if (data.rph >= 45) {
+            colorClass = "bg-red-500"; // Muito Quente
+          } else if (data.rph >= 35) {
+            colorClass = "bg-orange-500"; // Quente
+          } else if (data.rph >= 25) {
+            colorClass = "bg-yellow-500"; // Morno
+          } else if (data.rph >= 15) {
+            colorClass = "bg-blue-400"; // Frio
+          }
+
           return (
-            <div key={data.hour} className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl border border-gray-100 dark:border-gray-700/50 hover:shadow-md transition-shadow">
-              <div className="flex justify-between items-start mb-3">
-                <div className="bg-white dark:bg-gray-900 px-2.5 py-1 rounded-lg text-xs font-black text-gray-700 dark:text-gray-300 shadow-sm border border-gray-100 dark:border-gray-800">
-                  {startTimeStr} - {endTimeStr}
-                </div>
-                <div className="text-xs font-bold text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full">
-                  {data.count} {data.count === 1 ? 'corrida' : 'corridas'}
-                </div>
-              </div>
+            <div key={data.hour} className="flex-1 flex flex-col items-center gap-2 group relative">
               
-              <div className="text-2xl font-black text-gray-900 dark:text-white mb-3">
-                R$ {data.revenue.toFixed(2)}
+              {/* Tooltip on hover/touch */}
+              <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-[10px] p-2 rounded-xl pointer-events-none z-10 whitespace-nowrap shadow-xl">
+                <p className="font-black mb-1">{String(data.hour).padStart(2, '0')}:00 - {String((data.hour + 1) % 24).padStart(2, '0')}:00</p>
+                <p className="font-bold flex justify-between gap-4"><span>Faturado:</span> <span>R$ {data.revenue.toFixed(2)}</span></p>
+                <p className="flex justify-between gap-4"><span>Média:</span> <span>R$ {data.rph.toFixed(0)}/h</span></p>
+                <p className="flex justify-between gap-4 text-gray-400 dark:text-gray-500"><span>Corridas:</span> <span>{data.count}</span></p>
+                <div className="absolute bottom-[-4px] left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-900 dark:bg-white rotate-45" />
               </div>
-              
-              <div className="flex items-center gap-2 mt-auto">
-                <div className={cn("flex flex-1 items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl text-[10px] font-black tracking-widest uppercase", getRphTier(data.rph).bg, getRphTier(data.rph).color)}>
-                  <TrendingUp size={12} /> {data.rph.toFixed(0)}/h
-                </div>
-                <div className={cn("flex flex-1 items-center justify-center gap-1.5 px-2 py-1.5 rounded-xl text-[10px] font-black tracking-widest uppercase", getRpkmTier(data.rpkm).bg, getRpkmTier(data.rpkm).color)}>
-                  <MapPin size={12} /> {data.rpkm.toFixed(2)}/km
-                </div>
-              </div>
+
+              <div 
+                className={cn("w-full rounded-t-sm transition-all duration-500 hover:opacity-80", colorClass)} 
+                style={{ height: `${heightPct}%` }}
+              />
+              <span className="text-[8px] font-black text-gray-400">{String(data.hour).padStart(2, '0')}h</span>
             </div>
           );
         })}
+      </div>
+      
+      <div className="flex justify-between items-center mt-4 border-t border-gray-100 dark:border-white/5 pt-3">
+         <div className="flex items-center gap-2 text-[9px] font-bold text-gray-500 uppercase tracking-widest">
+            <span>Temperatura:</span>
+            <span className="w-2 h-2 rounded-full bg-gray-200 dark:bg-gray-800" /> Frio
+            <span className="w-2 h-2 rounded-full bg-yellow-500 ml-1" /> Morno
+            <span className="w-2 h-2 rounded-full bg-red-500 ml-1" /> Quente
+         </div>
       </div>
     </div>
   );
