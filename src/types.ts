@@ -86,6 +86,7 @@ export interface UserSettings {
   maintenanceCostPerKm: number;
   maintenancePercentage?: number; // % estimated for maintenance
   dailyRevenueGoal: number; // Used loosely before, can be kept
+  dailyHoursGoal?: number;
   monthlyNetGoal?: number; // Meta Líquida de Ganhos para o mês
   workDays?: number[]; // Dias de trabalho na semana (0=Dom, 1=Seg, ...)
   platformBalance?: number; // Saldo de Faturamento ainda na plataforma (Uber, 99)

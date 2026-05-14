@@ -1123,15 +1123,25 @@ ${importText}
   };
 
   const setDailyGoal = async (revenue: number, hours: number) => {
-    if (!activeShift) return;
+    if (!user) return;
     try {
-      await updateDoc(doc(db, 'shifts', activeShift.id), {
-        goalRevenue: revenue,
-        goalSeconds: hours * 3600
-      });
-      setShowDailyGoalModal(false);
+      if (activeShift) {
+        await updateDoc(doc(db, 'shifts', activeShift.id), {
+          goalRevenue: revenue,
+          goalSeconds: hours * 3600
+        });
+        setShowDailyGoalModal(false);
+      } else {
+        await updateDoc(doc(db, 'settings', user.uid), {
+          dailyRevenueGoal: revenue,
+          dailyHoursGoal: hours
+        });
+        setShowDailyGoalModal(false);
+        // Automatically prompt to start shift
+        setTimeout(() => setShowStartModal(true), 150);
+      }
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `shifts/${activeShift.id}`);
+      handleFirestoreError(err, OperationType.UPDATE, activeShift ? `shifts/${activeShift.id}` : `settings/${user.uid}`);
     }
   };
 
@@ -1152,6 +1162,8 @@ ${importText}
         totalWorkKm: 0,
         totalPersonalKm: personalKm,
         lastKm: km,
+        goalRevenue: settings?.dailyRevenueGoal || 0,
+        goalSeconds: (settings?.dailyHoursGoal || 0) * 3600,
         currentState: 'dispatch',
         stateLastChangedAt: new Date(),
         idleTimeSeconds: 0,
@@ -2426,7 +2438,7 @@ ${importText}
               <div className="space-y-5">
                 {!activeShift ? (
                   <div className="grid grid-cols-1 gap-3">
-                    <Button onClick={() => setShowStartModal(true)} className="py-7 text-xl font-black tracking-wide uppercase bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)] border-none rounded-2xl" icon={Play}>
+                    <Button onClick={() => setShowStartModal(true)} className="py-7 text-xl font-black tracking-wide uppercase bg-green-600 hover:bg-green-500 text-white shadow-[0_0_20px_rgba(22,163,74,0.5)] border-none rounded-2xl" icon={Play}>
                       Iniciar Turno
                     </Button>
                     <Button onClick={() => setShowPastShiftModal(true)} variant="outline" className="py-5 font-bold uppercase tracking-wider text-xs border-[#1F2937] text-gray-400 hover:text-white hover:bg-white/5 rounded-2xl" icon={Calendar}>
@@ -2492,6 +2504,13 @@ ${importText}
                   <p className="text-sm font-bold text-gray-400 font-mono tracking-widest">
                     {formatTime(elapsedTime)} <span className="opacity-50">ATIVO</span>
                   </p>
+                  {!activeShift && (
+                    <div className="mt-6 flex justify-center">
+                       <Button onClick={() => setShowDailyGoalModal(true)} variant="outline" className="py-2 px-4 font-bold uppercase tracking-wider text-[10px] border-indigo-500/30 text-indigo-500 hover:bg-indigo-500/10 rounded-xl" icon={Target}>
+                         Registrar Meta do Dia
+                       </Button>
+                    </div>
+                  )}
                 </div>
 
                 {activeShift?.status === 'active' && (
@@ -3676,7 +3695,7 @@ ${importText}
       </Modal>
 
       <Modal isOpen={showDailyGoalModal} onClose={() => setShowDailyGoalModal(false)} title="Meta do Dia">
-        <DailyGoalForm onSubmit={setDailyGoal} initialRevenue={activeShift?.goalRevenue} initialHours={activeShift?.goalSeconds ? activeShift.goalSeconds / 3600 : undefined} />
+        <DailyGoalForm onSubmit={setDailyGoal} initialRevenue={activeShift?.goalRevenue || settings?.dailyRevenueGoal} initialHours={activeShift?.goalSeconds ? activeShift.goalSeconds / 3600 : settings?.dailyHoursGoal} />
       </Modal>
 
       <Modal isOpen={showPauseModal} onClose={() => setShowPauseModal(false)} title="Pausar Turno">
