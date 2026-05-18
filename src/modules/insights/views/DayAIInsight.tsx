@@ -21,12 +21,19 @@ export function DayAIInsight({ metrics, hourlyData }: { metrics: any, hourlyData
   }, [hourlyData, metrics]);
 
   return (
-    <div className="mt-4 p-4 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/10 dark:to-purple-900/10 rounded-2xl border border-indigo-100 dark:border-indigo-900/20 relative overflow-hidden group">
-      <div className="absolute -right-4 -top-4 w-16 h-16 bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-2xl group-hover:scale-150 transition-transform duration-500" />
-      <p className="text-[11px] text-indigo-700 dark:text-indigo-300 font-bold italic leading-relaxed flex items-start gap-2 relative z-10">
-        <Sparkles size={14} className="mt-0.5 shrink-0 text-purple-500" /> 
-        {insight}
-      </p>
+    <div className="mt-4 p-5 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/10 dark:to-purple-900/10 rounded-2xl border border-indigo-100 dark:border-indigo-900/20 relative overflow-hidden group">
+      <div className="absolute -right-4 -top-4 w-32 h-32 bg-purple-500/10 dark:bg-purple-500/5 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700" />
+      <div className="flex items-start gap-3 relative z-10">
+        <div className="bg-purple-100 dark:bg-purple-900/30 p-2 rounded-xl shrink-0">
+          <Sparkles size={18} className="text-purple-600 dark:text-purple-400" /> 
+        </div>
+        <div>
+           <p className="text-xs font-black text-indigo-400 dark:text-indigo-500 uppercase tracking-widest mb-1">Análise de Inteligência</p>
+           <p className="text-[14px] text-indigo-900 dark:text-indigo-100 font-medium leading-relaxed">
+             {insight}
+           </p>
+        </div>
+      </div>
     </div>
   );
 }

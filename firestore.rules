@@ -73,7 +73,7 @@ service cloud.firestore {
     }
     
     function isDocOwner() {
-      return isAuthenticated() && (resource == null || resource.data.userId == request.auth.uid);
+      return isAuthenticated() && (resource == null || (('userId' in resource.data) && request.auth.uid == resource.data.userId));
     }
 
     function uidUnchanged() {
@@ -122,9 +122,9 @@ service cloud.firestore {
              data.distanceKm is number &&
              data.timestamp is timestamp &&
              (!('startTime' in data) || data.startTime is timestamp) &&
-             (!('isComplete' in data) || data.isComplete is boolean) &&
+             (!('isComplete' in data) || data.isComplete is bool) &&
              (!('dynamicValue' in data) || data.dynamicValue is number) &&
-             (!('isCancelled' in data) || data.isCancelled is boolean);
+             (!('isCancelled' in data) || data.isCancelled is bool);
     }
 
     function isValidExpense(data) {

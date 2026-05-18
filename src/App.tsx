@@ -35,7 +35,7 @@ import { Shift, Trip, Expense, ShiftStatus, ShiftState, Fuel, UserSettings, Fixe
 import { syncMonthlyStats } from './monthlyStats';
 
 import { cn, ensureDate } from './lib/utils';
-import { InsightsModule, ComparisonCard } from './modules/insights';
+import { InsightsModule } from './modules/insights';
 import { HourlyBreakdown } from './components/HourlyBreakdown';
 
 import { CurrentHourHistory } from './components/CurrentHourHistory';
@@ -315,7 +315,7 @@ function LiveShiftAnalysis({
       {/* Bloco 1 - Status Atual & Comparação */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
          <div>
-            <p className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-2">
+            <p className="text-xs font-black uppercase tracking-widest text-gray-500 mb-2">
               Status Atual
             </p>
             <div className={cn("px-4 py-1.5 rounded-full border text-xs font-black uppercase tracking-widest inline-block shadow-sm", tierColors[overallTier])}>
@@ -324,14 +324,14 @@ function LiveShiftAnalysis({
          </div>
          <div className="flex gap-6">
             <div>
-               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/H</p>
+               <p className="text-xs font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/H</p>
                <div className={cn("text-xs font-bold flex items-center gap-1", isRphAboveAvg ? "text-green-600 dark:text-green-400" : "text-red-500")}>
                  {isRphAboveAvg ? <TrendingUp size={14} /> : <TrendingDown size={14} />} 
                  {isRphAboveAvg ? 'Acima da média' : 'Abaixo da média'}
                </div>
             </div>
             <div>
-               <p className="text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/KM</p>
+               <p className="text-xs font-black uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-1.5">Média R$/KM</p>
                <div className={cn("text-xs font-bold flex items-center gap-1", isRpkmAboveAvg ? "text-green-600 dark:text-green-400" : "text-red-500")}>
                  {isRpkmAboveAvg ? <TrendingUp size={14} /> : <TrendingDown size={14} />} 
                  {isRpkmAboveAvg ? 'Acima da média' : 'Abaixo da média'}
@@ -343,9 +343,9 @@ function LiveShiftAnalysis({
       <div className="h-px w-full bg-gray-200 dark:bg-white/10" />
 
       {/* Frações de Hora (Etapa 3) */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="bg-white dark:bg-black/20 p-4 rounded-2xl border border-gray-200/60 dark:border-white/5 shadow-sm">
-          <p className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1">
+          <p className="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-1">
             <Clock size={12} /> Hora H{currentHourIndex}
           </p>
           <div className="text-xl font-black text-gray-900 dark:text-white flex items-baseline gap-2">
@@ -355,7 +355,7 @@ function LiveShiftAnalysis({
         </div>
         <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-2xl border border-green-100 dark:border-green-500/20 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-2"><Sparkles size={16} className="text-green-500 opacity-20" /></div>
-          <p className="text-[10px] font-bold text-green-600 dark:text-green-500 uppercase tracking-widest mb-2 flex items-center gap-1">
+          <p className="text-xs font-bold text-green-600 dark:text-green-500 uppercase tracking-widest mb-2 flex items-center gap-1">
             <Activity size={12} /> Hora H{currentHourIndex + 1}
           </p>
           <div className="text-xl font-black text-green-700 dark:text-green-400 flex items-baseline gap-2">
@@ -380,7 +380,7 @@ function LiveShiftAnalysis({
                  <TrendingUp size={14} className="text-green-600 dark:text-green-400" />}
               </div>
               <div className="flex-1">
-                 <p className={cn("text-[10px] font-black uppercase tracking-widest mb-1", 
+                 <p className={cn("text-xs font-black uppercase tracking-widest mb-1", 
                    alert.type === 'bad' ? 'text-red-600 dark:text-red-400' : 
                    alert.type === 'warning' ? 'text-orange-600 dark:text-orange-400' : 
                    'text-green-600 dark:text-green-400'
@@ -398,7 +398,7 @@ function LiveShiftAnalysis({
                <Target size={14} className="text-blue-600 dark:text-blue-400" />
              </div>
              <div className="flex-1">
-                <p className="text-[10px] font-black text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-1">Visando {dynamicTip.target}</p>
+                <p className="text-xs font-black text-blue-700 dark:text-blue-400 uppercase tracking-widest mb-1">Visando {dynamicTip.target}</p>
                 <p className="text-xs font-medium leading-relaxed opacity-80">{dynamicTip.msg}</p>
              </div>
           </div>
@@ -563,6 +563,36 @@ export default function App() {
   const toggleDay = (dateKey: string) => {
     setExpandedDays(prev => prev[dateKey] ? {} : { [dateKey]: true });
   };
+
+  useEffect(() => {
+    if (!user) return;
+    const fetchMissingTrips = async () => {
+      const missingShifts = shifts.filter(s => (s.totalTrips > 0 || s.totalRevenue > 0) && !shiftTrips[s.id]);
+      if (missingShifts.length === 0) return;
+
+      const newTripsObj: Record<string, Trip[]> = {};
+      let changed = false;
+
+      // Limit to max 30 to avoid excessive reads in one go
+      const shiftsToFetch = missingShifts.slice(0, 30); 
+
+      await Promise.all(shiftsToFetch.map(async (shift) => {
+        try {
+          const qTrips = query(collection(db, 'shifts', shift.id, 'trips'), where('userId', '==', user.uid));
+          const snap = await getDocs(qTrips);
+          newTripsObj[shift.id] = snap.docs.map(d => ({ id: d.id, ...d.data() } as Trip));
+          changed = true;
+        } catch (e) {
+          console.error("Error fetching trips for shift", shift.id, e);
+        }
+      }));
+
+      if (changed) {
+        setShiftTrips(prev => ({ ...prev, ...newTripsObj }));
+      }
+    };
+    fetchMissingTrips();
+  }, [shifts, shiftTrips, user]);
 
   // AI State
 
@@ -2407,7 +2437,7 @@ ${importText}
           <span className="font-black text-2xl sm:text-3xl tracking-tighter text-gray-900 dark:text-white uppercase leading-none">
             Driver<span className="text-green-500">Lucrativo</span>
           </span>
-          <span className="text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 font-bold tracking-widest mt-1 uppercase">
+          <span className="text-xs sm:text-xs text-gray-500 dark:text-gray-400 font-bold tracking-widest mt-1 uppercase">
             {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
           </span>
         </div>
@@ -2447,7 +2477,7 @@ ${importText}
                   </div>
                 ) : (
                   <div className="flex flex-col gap-3">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {activeShift.status === 'active' ? (
                         <Button onClick={() => setShowPauseModal(true)} variant="secondary" className="py-5 font-bold uppercase tracking-wider text-xs bg-[#1F2937] hover:bg-gray-700 text-white border-none rounded-2xl" icon={Pause}>
                           Pausar
@@ -2490,7 +2520,7 @@ ${importText}
                     </h2>
                   </div>
                   {activeShift?.status === 'active' && todayMetrics.currentRph > 0 && (
-                     <div className={cn("px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-widest border transition-colors duration-500", getRphTier(todayMetrics.currentRph).bg, getRphTier(todayMetrics.currentRph).color, getRphTier(todayMetrics.currentRph).border)}>
+                     <div className={cn("px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-widest border transition-colors duration-500", getRphTier(todayMetrics.currentRph).bg, getRphTier(todayMetrics.currentRph).color, getRphTier(todayMetrics.currentRph).border)}>
                         {getRphTier(todayMetrics.currentRph).label}
                      </div>
                   )}
@@ -2506,7 +2536,7 @@ ${importText}
                   </p>
                   {!activeShift && (
                     <div className="mt-6 flex justify-center">
-                       <Button onClick={() => setShowDailyGoalModal(true)} variant="outline" className="py-2 px-4 font-bold uppercase tracking-wider text-[10px] border-indigo-500/30 text-indigo-500 hover:bg-indigo-500/10 rounded-xl" icon={Target}>
+                       <Button onClick={() => setShowDailyGoalModal(true)} variant="outline" className="py-2 px-4 font-bold uppercase tracking-wider text-xs border-indigo-500/30 text-indigo-500 hover:bg-indigo-500/10 rounded-xl" icon={Target}>
                          Registrar Meta do Dia
                        </Button>
                     </div>
@@ -2514,15 +2544,15 @@ ${importText}
                 </div>
 
                 {activeShift?.status === 'active' && (
-                  <div className="grid grid-cols-2 gap-3 mt-8 relative z-10">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8 relative z-10">
                      <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
-                        <p className="text-[10px] uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / Hora</p>
+                        <p className="text-xs uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / Hora</p>
                         <p className={cn("text-2xl font-black transition-colors duration-500", todayMetrics.currentRph > 0 ? getRphTier(todayMetrics.currentRph).color : "text-white")}>
                            {todayMetrics.currentRph.toFixed(2)}
                         </p>
                      </div>
                      <div className="bg-white/5 border border-white/10 p-4 rounded-2xl text-center">
-                        <p className="text-[10px] uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / KM</p>
+                        <p className="text-xs uppercase font-bold text-gray-500 tracking-widest mb-1">R$ / KM</p>
                         <p className="text-2xl font-black text-white">
                            {todayMetrics.currentRpkm.toFixed(2)}
                         </p>
@@ -2554,7 +2584,7 @@ ${importText}
                       </div>
                       {todayMetrics.totalRevenue > 0 && todayMetrics.totalRevenue < ((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) && todayMetrics.totalTime > 0 && (
                          <div className="text-center">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-widest">
+                            <p className="text-xs text-gray-400 uppercase tracking-widest">
                                No ritmo atual (<span className="text-white">{todayMetrics.currentRph.toFixed(0)}/h</span>): ETA <span className="font-bold text-white">+{formatTimeHuman((((activeShift?.goalRevenue) || (planningMetrics?.dailyNeeded || 0)) - todayMetrics.totalRevenue) / (todayMetrics.currentRph / 3600))}</span>
                             </p>
                          </div>
@@ -2641,7 +2671,7 @@ ${importText}
                           <p className={cn("font-bold text-sm", alert.severity === 'critical' ? "text-red-900 dark:text-red-100" : "text-amber-900 dark:text-amber-100")}>
                             {alert.title}
                           </p>
-                          <span className="text-[10px] font-bold uppercase opacity-60 dark:text-white">{alert.message}</span>
+                          <span className="text-xs font-bold uppercase opacity-60 dark:text-white">{alert.message}</span>
                         </div>
                         <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
                           <motion.div 
@@ -2696,7 +2726,7 @@ ${importText}
                         <ChevronLeft size={18} />
                       </button>
                       <div className="text-center min-w-[140px]">
-                        <p className="text-[9px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">{periodRangeLabel.type}</p>
+                        <p className="text-[11px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest leading-none mb-1.5">{periodRangeLabel.type}</p>
                         <p className="text-xs font-bold text-gray-900 dark:text-gray-100 capitalize truncate">{periodRangeLabel.label}</p>
                       </div>
                       <button 
@@ -2711,23 +2741,23 @@ ${importText}
                 {shifts.length > 0 && (
                   <div className="bg-[#0B0B0C] dark:bg-[#111827]/80 rounded-[24px] border border-gray-800/80 shadow-2xl relative overflow-hidden mb-4">
                     <div className="absolute inset-0 bg-gradient-to-br from-[#22C55E]/5 to-transparent pointer-events-none" />
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 p-5 relative z-10">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 p-5 relative z-10">
                       <div className="relative z-10">
-                        <p className="text-[9px] uppercase font-black text-[#22C55E] tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Total Faturado</p>
+                        <p className="text-[11px] uppercase font-black text-[#22C55E] tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={12} />Total Faturado</p>
                         <p className="text-2xl lg:text-3xl font-black text-white tracking-tighter">R$ {historySummary.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                       </div>
                       <div className="relative z-10">
-                        <p className="text-[9px] uppercase font-black text-gray-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Horas Direção</p>
+                        <p className="text-[11px] uppercase font-black text-gray-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Clock size={12} />Horas Direção</p>
                         <p className="text-2xl font-bold text-gray-200 tracking-tighter">
                           {Math.floor(historySummary.totalTime / 3600)}<span className="text-sm font-medium text-gray-500 mx-0.5">h</span>{Math.floor((historySummary.totalTime % 3600) / 60)}<span className="text-sm font-medium text-gray-500 ml-0.5">m</span>
                         </p>
                       </div>
                       <div className="relative z-10">
-                        <p className="text-[9px] uppercase font-black text-emerald-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$/Hora Médio</p>
+                        <p className="text-[11px] uppercase font-black text-emerald-400 tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={12} />R$/Hora Médio</p>
                         <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-emerald-400">R$ {historySummary.rph.toFixed(2)}</span> /h</p>
                       </div>
                       <div className="relative z-10">
-                        <p className="text-[9px] uppercase font-black text-indigo-400 tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$/KM Médio</p>
+                        <p className="text-[11px] uppercase font-black text-indigo-400 tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={12} />R$/KM Médio</p>
                         <p className="text-2xl font-bold text-gray-200 tracking-tighter"><span className="text-indigo-400">R$ {historySummary.rpkm.toFixed(2)}</span> /km</p>
                       </div>
                     </div>
@@ -2786,7 +2816,7 @@ ${importText}
                           {/* Header: Date and Accuracy Badge */}
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center justify-between mb-1">
-                              <div className={cn("px-2 py-1 rounded-lg border text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 shrink-0", dayTripStatusColor)}>
+                              <div className={cn("px-2 py-1 rounded-lg border text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5 shrink-0", dayTripStatusColor)}>
                                 {(incompleteTrips > 0 || registeredTrips < totalExpectedDayTrips || totalDisplayTrips === 0) ? <AlertCircle size={10} /> : <CheckCircle2 size={10} />}
                                 {dayTripStatusText}
                               </div>
@@ -2818,15 +2848,15 @@ ${importText}
                           {/* Horizontal Tech Stats */}
                           <div className="flex items-center gap-3 pt-4 border-t border-gray-100 dark:border-gray-800/60">
                             <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
-                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><Clock size={10}/> Tempo</span>
+                              <span className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><Clock size={10}/> Tempo</span>
                               <span className="text-sm font-black dark:text-white tabular-nums">{formatTimeHuman(group.totalTime)}</span>
                             </div>
                             <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
-                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><TrendingUp size={10}/> R$/h</span>
+                              <span className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><TrendingUp size={10}/> R$/h</span>
                               <span className="text-sm font-black dark:text-white tabular-nums">{isFinite(rph) ? `R$ ${rph.toFixed(0)}` : '--'}</span>
                             </div>
                             <div className="flex-1 flex flex-col items-center justify-center p-2.5 rounded-2xl bg-gray-50 dark:bg-gray-800/40 border border-gray-100/50 dark:border-gray-700/30">
-                              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><MapPin size={10}/> R$/km</span>
+                              <span className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5 mb-1"><MapPin size={10}/> R$/km</span>
                               <span className="text-sm font-black dark:text-white tabular-nums">{isFinite(rpkm) ? `R$ ${rpkm.toFixed(2)}` : '--'}</span>
                             </div>
                           </div>
@@ -2856,7 +2886,7 @@ ${importText}
                                     if (!isExpanded) toggleDay(dateKey);
                                   }
                                 }}
-                                className="bg-orange-500 hover:bg-orange-600 text-white text-[10px] font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all shadow-sm shadow-orange-500/20 active:scale-95 whitespace-nowrap"
+                                className="bg-orange-500 hover:bg-orange-600 text-white text-xs font-black uppercase tracking-widest px-3 py-2 rounded-xl transition-all shadow-sm shadow-orange-500/20 active:scale-95 whitespace-nowrap"
                               >
                                 Resolver
                               </button>
@@ -2900,7 +2930,7 @@ ${importText}
                                 <div className="p-4 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a2133]/50 transition-colors" onClick={() => setExpandedShiftId(expandedShiftId === shift.id ? null : shift.id)}>
                                   <div className="flex justify-between items-start mb-3">
                                     <div>
-                                      <p className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1">
+                                      <p className="text-xs font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1">
                                         Turno {group.shifts.length - index}
                                       </p>
                                       <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-1.5">
@@ -2935,7 +2965,7 @@ ${importText}
                                   </div>
 
                                   <div className="flex items-center justify-between mt-2 pt-3 border-t border-gray-100 dark:border-gray-800/60">
-                                    <div className={cn("text-[10px] uppercase font-black tracking-widest px-2 py-0.5 rounded-md", shiftStatusColor)}>
+                                    <div className={cn("text-xs uppercase font-black tracking-widest px-2 py-0.5 rounded-md", shiftStatusColor)}>
                                       {shiftStatusTitle}
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -2984,7 +3014,7 @@ ${importText}
                                         <div className="grid grid-cols-1 gap-3">
                                           <div className="bg-white dark:bg-[#111827] px-5 py-4 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex items-center justify-between group/metric hover:border-indigo-100 dark:hover:border-indigo-500/20 transition-all">
                                             <div>
-                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={10} className="text-indigo-500" />Odômetro</p>
+                                              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><MapPin size={10} className="text-indigo-500" />Odômetro</p>
                                               <div className="flex items-center text-sm font-black text-gray-900 dark:text-gray-200 tabular-nums">
                                                 <span>{shift.startKm}</span>
                                                 <ArrowRight size={12} className="text-gray-400 mx-2" />
@@ -2992,26 +3022,26 @@ ${importText}
                                               </div>
                                             </div>
                                             <div className="text-right">
-                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Dist. Rodada</p>
+                                              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Dist. Rodada</p>
                                               <p className="text-base font-black text-indigo-600 dark:text-indigo-400 tabular-nums">{(shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm)).toFixed(1)} km</p>
                                             </div>
                                           </div>
 
                                           <div className="bg-white dark:bg-[#111827] px-5 py-4 rounded-3xl border border-gray-100 dark:border-gray-800 shadow-sm flex items-center justify-between group/metric hover:border-emerald-100 dark:hover:border-emerald-500/20 transition-all">
                                             <div>
-                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={10} className="text-emerald-500" />Eficiência</p>
+                                              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><Activity size={10} className="text-emerald-500" />Eficiência</p>
                                               <p className="text-sm font-black text-gray-900 dark:text-gray-200 tabular-nums">{shift.avgConsumption?.toFixed(1) || '0.0'} km/L</p>
                                             </div>
                                             <div className="text-right">
-                                              <p className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Total Gasto</p>
+                                              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase font-black tracking-widest mb-1.5">Total Gasto</p>
                                               <p className="text-base font-black text-gray-900 dark:text-white tabular-nums">~{((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)).toFixed(1)} L</p>
                                             </div>
                                           </div>
 
                                           <div className="bg-red-50 dark:bg-red-950/20 px-5 py-4 rounded-3xl border border-red-100 dark:border-red-900/30 shadow-sm flex items-center justify-between">
                                             <div>
-                                              <p className="text-[10px] text-red-600 dark:text-red-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={10} className="text-red-500" />Custo Operacional</p>
-                                              <p className="text-[9px] font-bold text-red-700/60 dark:text-red-400/60 uppercase tracking-widest">Base R$ {settings?.defaultFuelPrice?.toFixed(2) || '0.00'}/L</p>
+                                              <p className="text-xs text-red-600 dark:text-red-400 uppercase font-black tracking-widest mb-1.5 flex items-center gap-1.5"><DollarSign size={10} className="text-red-500" />Custo Operacional</p>
+                                              <p className="text-[11px] font-bold text-red-700/60 dark:text-red-400/60 uppercase tracking-widest">Base R$ {settings?.defaultFuelPrice?.toFixed(2) || '0.00'}/L</p>
                                             </div>
                                             <div className="text-right">
                                               <p className="text-lg font-black text-red-700 dark:text-red-400 tabular-nums">- R$ {(((shift.totalWorkKm || ((shift.endKm || 0) - shift.startKm) || 0) / (shift.avgConsumption || 1)) * (settings?.defaultFuelPrice || 0)).toFixed(2)}</p>
@@ -3022,13 +3052,13 @@ ${importText}
                                         {shiftTrips[shift.id] && shiftTrips[shift.id].length > 0 && (
                                           <div className="space-y-3 mt-4 pt-4 border-t border-gray-200/50 dark:border-gray-700/50">
                                             <div className="flex justify-between items-center mb-2">
-                                              <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5"><MapPin size={10} /> Corridas do Turno</p>
+                                              <p className="text-xs text-gray-500 uppercase font-black tracking-widest flex items-center gap-1.5"><MapPin size={10} /> Corridas do Turno</p>
                                               <button 
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   setShiftToDeleteAllTrips(shift.id);
                                                 }}
-                                                className="text-[10px] text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors px-2 py-1 rounded border border-transparent hover:border-red-200 dark:hover:border-red-900"
+                                                className="text-xs text-red-500 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 font-bold uppercase transition-colors px-2 py-1 rounded border border-transparent hover:border-red-200 dark:hover:border-red-900"
                                               >
                                                 Apagar Todas
                                               </button>
@@ -3079,11 +3109,11 @@ ${importText}
                                                     <div className="flex justify-between items-start mb-3">
                                                       <div className="flex items-center gap-3">
                                                         {tripHour && (
-                                                          <div className="bg-gray-50 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg text-[10px] font-black tabular-nums text-gray-500 dark:text-gray-400">
+                                                          <div className="bg-gray-50 dark:bg-gray-800 px-2.5 py-1.5 rounded-lg text-xs font-black tabular-nums text-gray-500 dark:text-gray-400">
                                                             {tripHour}
                                                           </div>
                                                         )}
-                                                        <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all group-hover:scale-105", statusConfig.bg, statusConfig.color, statusConfig.border)}>
+                                                        <div className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest border transition-all group-hover:scale-105", statusConfig.bg, statusConfig.color, statusConfig.border)}>
                                                           {statusConfig.icon}
                                                           {statusConfig.label}
                                                         </div>
@@ -3121,7 +3151,7 @@ ${importText}
                                                             {trip.value.toFixed(2)}
                                                           </p>
                                                           {(trip.dynamicValue || 0) > 0 && (
-                                                            <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-500/20 whitespace-nowrap">
+                                                            <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-100 dark:border-indigo-500/20 whitespace-nowrap">
                                                               +{trip.dynamicValue.toFixed(2)} din.
                                                             </span>
                                                           )}
@@ -3141,9 +3171,9 @@ ${importText}
                                                       
                                                       {!isCancelled && isComplete && (
                                                         <div className="text-right flex flex-col items-end shrink-0">
-                                                          <p className="text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1.5">Eficiência</p>
+                                                          <p className="text-[11px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-widest leading-none mb-1.5">Eficiência</p>
                                                           <div className={cn("px-3 py-2 rounded-2xl font-black text-sm border shadow-sm transition-all", getRpkmTier(tripRpkm).bg, getRpkmTier(tripRpkm).color, "border-current/10")}>
-                                                            {tripRpkm.toFixed(2)}<span className="text-[10px] ml-0.5 opacity-70">/km</span>
+                                                            {tripRpkm.toFixed(2)}<span className="text-xs ml-0.5 opacity-70">/km</span>
                                                           </div>
                                                         </div>
                                                       )}
@@ -3182,13 +3212,13 @@ ${importText}
                       className="w-full py-6 rounded-2xl bg-green-600 hover:bg-green-500 text-white shadow-sm border-none flex items-center justify-center gap-3"
                     >
                       <div className="text-left">
-                        <p className="text-[10px] font-black uppercase tracking-widest opacity-80 leading-none mb-1">Lançamento</p>
+                        <p className="text-xs font-black uppercase tracking-widest opacity-80 leading-none mb-1">Lançamento</p>
                         <p className="text-base font-bold">Registrar Turno</p>
                       </div>
                     </Button>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 pt-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
                     <Button 
                       onClick={() => setShowImportModal(true)} 
                       icon={Upload} 
@@ -3208,7 +3238,7 @@ ${importText}
                     </Button>
                   </div>
 
-                  <p className="text-[10px] text-center text-gray-400 dark:text-gray-500 font-medium uppercase tracking-tighter">
+                  <p className="text-xs text-center text-gray-400 dark:text-gray-500 font-medium uppercase tracking-tighter">
                     Gerencie seu histórico e analise seu desempenho com IA
                   </p>
                 </div>
@@ -3252,7 +3282,7 @@ ${importText}
                       <div className="relative z-10">
                         <div className="flex justify-between items-center mb-6">
                           <div>
-                            <p className="text-[10px] font-bold uppercase tracking-wider text-indigo-200 mb-0.5">Meta Dinâmica do Mês (1)</p>
+                            <p className="text-xs font-bold uppercase tracking-wider text-indigo-200 mb-0.5">Meta Dinâmica do Mês (1)</p>
                             <h3 className="text-3xl font-black">R$ {planningMetrics.revenueNeededTotal.toFixed(0)} <span className="text-xs font-medium opacity-70">Faturamento Bruto</span></h3>
                           </div>
                           <button 
@@ -3268,11 +3298,11 @@ ${importText}
                         <div className="space-y-3 mb-6 bg-black/10 p-4 rounded-2xl border border-white/10">
                           <div className="flex justify-between items-end">
                             <div className="space-y-1">
-                              <p className="text-[10px] font-semibold uppercase text-indigo-200">Faturado no Mês (2)</p>
+                              <p className="text-xs font-semibold uppercase text-indigo-200">Faturado no Mês (2)</p>
                               <p className="text-xl font-bold text-green-300">R$ {planningMetrics.revenueSoFar.toFixed(0)}</p>
                             </div>
                             <div className="text-right space-y-1">
-                              <p className="text-[10px] font-semibold uppercase text-indigo-200">Falta para Meta (3)</p>
+                              <p className="text-xs font-semibold uppercase text-indigo-200">Falta para Meta (3)</p>
                               <p className="text-xl font-bold text-yellow-300">R$ {planningMetrics.revenueRemaining.toFixed(0)}</p>
                             </div>
                           </div>
@@ -3292,9 +3322,9 @@ ${importText}
                       {/* Meta Diária (4) */}
                       <div className="bg-indigo-50 dark:bg-indigo-900/20 p-4 rounded-2xl border border-indigo-100 dark:border-indigo-800/40 flex items-center justify-between">
                          <div>
-                            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest mb-1">Passo a Passo (4)</p>
+                            <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest mb-1">Passo a Passo (4)</p>
                             <h4 className="text-2xl font-black text-indigo-900 dark:text-indigo-100">R$ {planningMetrics.dailyNeeded.toFixed(0)} <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">/dia</span></h4>
-                            <p className="text-[10px] font-bold text-indigo-500/70 mt-1 uppercase">{planningMetrics.daysRemaining} {planningMetrics.daysRemaining === 1 ? 'dia útil restante' : 'dias úteis restantes'}</p>
+                            <p className="text-xs font-bold text-indigo-500/70 mt-1 uppercase">{planningMetrics.daysRemaining} {planningMetrics.daysRemaining === 1 ? 'dia útil restante' : 'dias úteis restantes'}</p>
                          </div>
                          <div className="h-12 w-12 rounded-xl bg-indigo-100 dark:bg-indigo-800/50 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
                             <CalendarIcon size={24} />
@@ -3305,17 +3335,17 @@ ${importText}
                       <div className="bg-violet-50 dark:bg-violet-900/20 p-4 rounded-2xl border border-violet-100 dark:border-violet-800/40">
                          <div className="flex items-center gap-2 mb-4">
                             <Clock size={16} className="text-violet-600 dark:text-violet-400" />
-                            <p className="text-[10px] font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest">Esforço estimado para conclusão (5)</p>
+                            <p className="text-xs font-bold text-violet-600 dark:text-violet-400 uppercase tracking-widest">Esforço estimado para conclusão (5)</p>
                          </div>
                          
-                         <div className="grid grid-cols-2 gap-3 mb-4">
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                             <div>
                                <p className="text-lg font-black text-violet-900 dark:text-violet-100">~{planningMetrics.totalHoursRemaining.toFixed(0)} <span className="text-sm opacity-70">horas</span></p>
-                               <p className="text-[10px] font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRph.toFixed(0)}/h</p>
+                               <p className="text-xs font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRph.toFixed(0)}/h</p>
                             </div>
                             <div>
                                <p className="text-lg font-black text-violet-900 dark:text-violet-100">~{planningMetrics.totalKmRemaining.toFixed(0)} <span className="text-sm opacity-70">km</span></p>
-                               <p className="text-[10px] font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRpkm.toFixed(2)}/km</p>
+                               <p className="text-xs font-medium text-violet-500 mt-0.5">Base: R$ {planningMetrics.avgRpkm.toFixed(2)}/km</p>
                             </div>
                          </div>
                          
@@ -3325,7 +3355,7 @@ ${importText}
                                <span className="text-xs font-bold">Gasto com Gasolina:</span>
                             </div>
                             <div className="text-right">
-                               <p className="text-sm font-black text-gray-900 dark:text-white">R$ {planningMetrics.estimatedFuelCostRemaining.toFixed(0)} <span className="text-[10px] font-medium opacity-60">(~{planningMetrics.litersRemaining.toFixed(0)}L)</span></p>
+                               <p className="text-sm font-black text-gray-900 dark:text-white">R$ {planningMetrics.estimatedFuelCostRemaining.toFixed(0)} <span className="text-xs font-medium opacity-60">(~{planningMetrics.litersRemaining.toFixed(0)}L)</span></p>
                             </div>
                          </div>
                       </div>
@@ -3334,7 +3364,7 @@ ${importText}
                       <div className="bg-gray-50 dark:bg-gray-800/40 p-4 rounded-2xl border border-gray-100 dark:border-gray-700/50">
                         <div className="flex items-center gap-2 mb-3">
                           <Activity size={14} className="text-gray-500" />
-                          <p className="text-[10px] font-black uppercase text-gray-500 tracking-wider">Como essa meta é composta?</p>
+                          <p className="text-xs font-black uppercase text-gray-500 tracking-wider">Como essa meta é composta?</p>
                         </div>
                         <ul className="space-y-2 text-[11px] text-gray-600 dark:text-gray-400 font-medium">
                           <li className="flex justify-between"><span>💰 Lucro Desejado (Bolso):</span> <span className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics.monthlyNetGoal.toFixed(0)}</span></li>
@@ -3344,7 +3374,7 @@ ${importText}
                         </ul>
                         
                         <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex gap-2">
-                           <p className="text-[10px] text-gray-400 font-medium italic">
+                           <p className="text-xs text-gray-400 font-medium italic">
                              Consulte a aba de Insights para um planejamento detalhado com IA.
                            </p>
                         </div>
@@ -3403,7 +3433,7 @@ ${importText}
                           </div>
                           <div className="flex items-center justify-between w-full pt-3 border-t border-gray-100 dark:border-gray-800/50">
                             <div>
-                               <p className="text-[10px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-0.5">Valor da Conta</p>
+                               <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-widest mb-0.5">Valor da Conta</p>
                                <p className="font-bold text-lg dark:text-white tracking-tight">R$ {fe.amount.toFixed(2)}</p>
                             </div>
                             <div className="flex items-center gap-2">
@@ -3455,7 +3485,7 @@ ${importText}
                         </div>
                         <div className="text-right">
                            <p className="font-bold text-base text-gray-900 dark:text-white tracking-tight">R$ {w.amount.toFixed(2)}</p>
-                           {w.fee > 0 && <p className="text-[10px] font-bold text-red-500 mt-0.5">Taxa: R$ {w.fee.toFixed(2)}</p>}
+                           {w.fee > 0 && <p className="text-xs font-bold text-red-500 mt-0.5">Taxa: R$ {w.fee.toFixed(2)}</p>}
                         </div>
                       </Card>
                     ))}
@@ -3493,7 +3523,7 @@ ${importText}
                             <div className="text-right">
                               <p className="text-sm font-bold text-green-600 dark:text-green-400">{fuel.km} km</p>
                               {kmDriven > 0 && (
-                                <p className="text-[10px] text-green-600 dark:text-green-500 font-bold mt-0.5">{kmDriven} km rod.</p>
+                                <p className="text-xs text-green-600 dark:text-green-500 font-bold mt-0.5">{kmDriven} km rod.</p>
                               )}
                             </div>
                             <div className="p-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg group-hover:bg-green-100 dark:group-hover:bg-green-900/40 transition-colors">
@@ -3618,7 +3648,7 @@ ${importText}
         <div className="space-y-6">
            <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-2xl flex items-center justify-between border border-red-100 dark:border-red-800/50">
              <div>
-               <p className="text-[10px] text-red-600/70 dark:text-red-400/70 font-black uppercase tracking-widest mb-1">Total Estimado</p>
+               <p className="text-xs text-red-600/70 dark:text-red-400/70 font-black uppercase tracking-widest mb-1">Total Estimado</p>
                <p className="text-2xl font-black text-red-700 dark:text-red-400">R$ {planningMetrics ? (planningMetrics.estimatedFuelCostRemaining + planningMetrics.totalFixed + planningMetrics.totalExtraExpenses).toFixed(2) : '0.00'}</p>
              </div>
              <Wallet size={32} className="text-red-300 dark:text-red-800" />
@@ -3632,7 +3662,7 @@ ${importText}
                    <div className="bg-orange-100 dark:bg-orange-900/40 p-2 rounded-lg text-orange-600 dark:text-orange-400"><TrendingUp size={16} /></div>
                    <div>
                      <p className="font-bold text-sm dark:text-white">Combustível</p>
-                     <p className="text-[10px] text-gray-500 font-medium">Base p/ alcançar a meta calculada</p>
+                     <p className="text-xs text-gray-500 font-medium">Base p/ alcançar a meta calculada</p>
                    </div>
                  </div>
                  <p className="font-bold text-gray-900 dark:text-white">R$ {planningMetrics?.estimatedFuelCostRemaining.toFixed(2) || '0.00'}</p>
@@ -3650,7 +3680,7 @@ ${importText}
                        <div className="bg-green-100 dark:bg-green-900/40 p-2 rounded-lg text-green-600 dark:text-green-400"><Calendar size={16} /></div>
                        <div>
                          <p className="font-bold text-sm dark:text-white">{fe.name}</p>
-                         <p className="text-[10px] text-gray-500 font-medium">Venc. Dia {fe.dueDay}</p>
+                         <p className="text-xs text-gray-500 font-medium">Venc. Dia {fe.dueDay}</p>
                        </div>
                      </div>
                      <p className="font-bold text-gray-900 dark:text-white">R$ {fe.amount.toFixed(2)}</p>
@@ -3678,7 +3708,7 @@ ${importText}
                        <div className="bg-red-100 dark:bg-red-900/40 p-2 rounded-lg text-red-600 dark:text-red-400"><FileText size={16} /></div>
                        <div>
                          <p className="font-bold text-sm dark:text-white">{e.category}</p>
-                         <p className="text-[10px] text-gray-500 font-medium">{format(ensureDate(e.date), "dd/MM/yyyy")}</p>
+                         <p className="text-xs text-gray-500 font-medium">{format(ensureDate(e.date), "dd/MM/yyyy")}</p>
                        </div>
                      </div>
                      <p className="font-bold text-gray-900 dark:text-white">R$ {e.value.toFixed(2)}</p>
@@ -3778,7 +3808,7 @@ ${importText}
                   <span className="dark:text-white">{format(new Date(shift.startTime), 'dd/MM/yyyy')}</span>
                   <span className="text-green-600 dark:text-green-400">R$ {Number(shift.totalRevenue).toFixed(2)}</span>
                 </div>
-                <div className="text-gray-600 dark:text-gray-400 grid grid-cols-2 gap-2 text-xs">
+                <div className="text-gray-600 dark:text-gray-400 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                   <span>Início: {format(new Date(shift.startTime), 'HH:mm')}</span>
                   <span>Fim: {shift.endTime ? format(new Date(shift.endTime), 'HH:mm') : '--'}</span>
                   <span>KM Rodado: {shift.totalWorkKm} km</span>
@@ -4005,7 +4035,7 @@ function NavButton({ active, onClick, icon: Icon, label }: { active: boolean, on
       )}
     >
       <Icon size={22} className="sm:w-6 sm:h-6" strokeWidth={active ? 2.5 : 2} />
-      <span className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest">{label}</span>
+      <span className="text-[11px] sm:text-xs font-bold uppercase tracking-widest">{label}</span>
       {active && <motion.div layoutId="nav-dot" className="w-1 h-1 bg-green-600 rounded-full mt-0.5" />}
     </button>
   );
@@ -4128,7 +4158,7 @@ function QuickTripForm({ onSubmit }: { onSubmit: (value: number) => void }) {
   return (
     <div className="space-y-4">
        {!showOther ? (
-         <div className="grid grid-cols-2 gap-3">
+         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
            {presets.map(p => (
              <Button 
                key={p} 
@@ -4337,7 +4367,7 @@ function PartialRevenueForm({ onSubmit, currentRevenue, initialKm }: { onSubmit:
       >
         Atualizar Faturamento e KM
       </Button>
-      <p className="text-[10px] text-gray-400 text-center uppercase font-bold tracking-widest">
+      <p className="text-xs text-gray-400 text-center uppercase font-bold tracking-widest">
         Dica: Se deixar vazio, os valores atuais serão mantidos.
       </p>
     </form>
@@ -4419,7 +4449,7 @@ function ExpenseForm({ onSubmit, initialData, onDelete }: {
       
       <div className="space-y-3">
         <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Forma de Pagamento</label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Button variant={paymentMethod === 'Pix' ? 'primary' : 'outline'} onClick={() => setPaymentMethod('Pix')}>Pix</Button>
           <Button variant={paymentMethod === 'Crédito' ? 'primary' : 'outline'} onClick={() => setPaymentMethod('Crédito')}>Crédito</Button>
         </div>
@@ -4866,7 +4896,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
       )}
 
       <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl space-y-4 border border-gray-100 dark:border-gray-700 relative">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input 
             label="Hora (HH:MM)" 
             type="time" 
@@ -4883,7 +4913,7 @@ function SequentialTripForm({ shift, existingTrips, initialTripId, onSave, onDel
           />
         </div>
         
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <CurrencyInput label={isCancelled ? "Taxa Cancelamento (R$)" : "Valor Total (R$)"} value={valueStr} onValueChange={setValueStr} />
           <Input 
             label="Distância (KM)" 
@@ -4993,7 +5023,7 @@ function MonthlyGoalForm({ onSubmit, currentGoal, currentWorkDays }: { onSubmit:
             </button>
           ))}
         </div>
-        <p className="text-[10px] text-gray-400 mt-2">Usaremos esses dias para calcular a sua meta diária proporcional, ignorando as suas folgas.</p>
+        <p className="text-xs text-gray-400 mt-2">Usaremos esses dias para calcular a sua meta diária proporcional, ignorando as suas folgas.</p>
       </div>
 
       <Button onClick={() => onSubmit(Number(goal), workDays)} disabled={workDays.length === 0} className="w-full py-4 mt-6">Salvar Configuração</Button>
@@ -5064,7 +5094,7 @@ function WithdrawalForm({ onSubmit, platformBalance }: {
       
       <div className="space-y-3">
         <label className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Houve taxa de saque?</label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Button variant={!hasFee ? 'primary' : 'outline'} onClick={() => { setHasFee(false); setFee('0'); }}>Não</Button>
           <Button variant={hasFee ? 'primary' : 'outline'} onClick={() => setHasFee(true)}>Sim</Button>
         </div>

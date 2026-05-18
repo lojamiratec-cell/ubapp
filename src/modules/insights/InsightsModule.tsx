@@ -391,23 +391,41 @@ export function InsightsModule({
        // Single day bar chart (hourly maybe?)
     } else if (periodFilter === 'week') {
       const start = startOfWeek(now, { weekStartsOn: 1 });
+      const prevStart = subWeeks(start, 1);
       revenueData = Array.from({ length: 7 }).map((_, i) => {
         const dayDate = addDays(start, i);
         const dayShifts = shifts.filter(s => isSameDay(ensureDate(s.startTime), dayDate) && s.status === 'finished');
+        
+        const prevDate = addDays(prevStart, i);
+        const prevShifts = shifts.filter(s => isSameDay(ensureDate(s.startTime), prevDate) && s.status === 'finished');
+
         return {
           name: format(dayDate, 'EEE', { locale: ptBR }),
-          value: dayShifts.reduce((acc, s) => acc + s.totalRevenue, 0)
+          value: dayShifts.reduce((acc, s) => acc + s.totalRevenue, 0),
+          prevValue: prevShifts.reduce((acc, s) => acc + s.totalRevenue, 0)
         };
       });
     } else if (periodFilter === 'month') {
       const start = startOfMonth(now);
+      const prevStart = startOfMonth(subMonths(now, 1));
       const daysCount = differenceInDays(endOfMonth(now), start) + 1;
+      
       revenueData = Array.from({ length: daysCount }).map((_, i) => {
         const dayDate = addDays(start, i);
         const dayShifts = shifts.filter(s => isSameDay(ensureDate(s.startTime), dayDate) && s.status === 'finished');
+        
+        let prevValue = 0;
+        const daysInPrevMonth = differenceInDays(endOfMonth(subMonths(now, 1)), prevStart) + 1;
+        if (i < daysInPrevMonth) {
+          const prevDate = addDays(prevStart, i);
+          const prevShifts = shifts.filter(s => isSameDay(ensureDate(s.startTime), prevDate) && s.status === 'finished');
+          prevValue = prevShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
+        }
+
         return {
           name: format(dayDate, 'dd'),
-          value: dayShifts.reduce((acc, s) => acc + s.totalRevenue, 0)
+          value: dayShifts.reduce((acc, s) => acc + s.totalRevenue, 0),
+          prevValue: prevValue
         };
       });
     }
@@ -528,30 +546,41 @@ export function InsightsModule({
   }, [shifts]);
 
   const costsMetrics = useMemo(() => {
-    const now = new Date();
-    const thirtyDaysAgo = subDays(now, 30);
+    let periodShifts = shifts.filter(s => s.status === 'finished');
+    let periodExpenses = expenses;
+    let periodFuel = fuelRecords;
+
+    if (periodFilter === 'day') {
+      periodShifts = periodShifts.filter(s => isSameDay(ensureDate(s.startTime), referenceDate));
+      periodExpenses = periodExpenses.filter(e => isSameDay(ensureDate(e.date), referenceDate));
+      periodFuel = periodFuel.filter(f => isSameDay(ensureDate(f.date), referenceDate));
+    } else if (periodFilter === 'week') {
+      periodShifts = periodShifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
+      periodExpenses = periodExpenses.filter(e => isSameWeek(ensureDate(e.date), referenceDate, { weekStartsOn: 1 }));
+      periodFuel = periodFuel.filter(f => isSameWeek(ensureDate(f.date), referenceDate, { weekStartsOn: 1 }));
+    } else if (periodFilter === 'month') {
+      periodShifts = periodShifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
+      periodExpenses = periodExpenses.filter(e => isSameMonth(ensureDate(e.date), referenceDate));
+      periodFuel = periodFuel.filter(f => isSameMonth(ensureDate(f.date), referenceDate));
+    }
     
-    const last30DaysShifts = shifts.filter(s => s.status === 'finished' && ensureDate(s.startTime) >= thirtyDaysAgo);
-    const last30DaysExpenses = expenses.filter(e => ensureDate(e.date) >= thirtyDaysAgo);
-    const last30DaysFuel = fuelRecords.filter(f => ensureDate(f.date) >= thirtyDaysAgo);
-    
-    const totalRevenue30Days = last30DaysShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
+    const totalRevenuePeriod = periodShifts.reduce((acc, s) => acc + s.totalRevenue, 0);
     const maintenancePercentage = settings?.maintenancePercentage ?? 10;
-    const maintenanceReserve = totalRevenue30Days * (maintenancePercentage / 100);
+    const maintenanceReserve = totalRevenuePeriod * (maintenancePercentage / 100);
     
-    const spentOnTires = last30DaysExpenses.filter(e => e.category === 'Pneus').reduce((acc, e) => acc + e.value, 0);
-    const spentOnOil = last30DaysExpenses.filter(e => e.category === 'Óleo').reduce((acc, e) => acc + e.value, 0);
-    const spentOnMaintenance = last30DaysExpenses.filter(e => e.category === 'Manutenção').reduce((acc, e) => acc + e.value, 0);
+    const spentOnTires = periodExpenses.filter(e => e.category === 'Pneus').reduce((acc, e) => acc + e.value, 0);
+    const spentOnOil = periodExpenses.filter(e => e.category === 'Óleo').reduce((acc, e) => acc + e.value, 0);
+    const spentOnMaintenance = periodExpenses.filter(e => e.category === 'Manutenção').reduce((acc, e) => acc + e.value, 0);
     
     const totalSpentOnCar = spentOnTires + spentOnOil + spentOnMaintenance;
     const reserveBalance = maintenanceReserve - totalSpentOnCar;
 
-    const totalFuelValue30Days = last30DaysFuel.reduce((acc, f) => acc + f.totalValue, 0);
-    const totalLiters30Days = last30DaysFuel.reduce((acc, f) => acc + f.liters, 0);
-    const totalExpenses30Days = last30DaysExpenses.reduce((acc, e) => acc + e.value, 0);
+    const totalFuelValuePeriod = periodFuel.reduce((acc, f) => acc + f.totalValue, 0);
+    const totalLitersPeriod = periodFuel.reduce((acc, f) => acc + f.liters, 0);
+    const totalExpensesPeriod = periodExpenses.reduce((acc, e) => acc + e.value, 0);
 
     return {
-      totalRevenue30Days,
+      totalRevenuePeriod,
       maintenanceReserve,
       spentOnTires,
       spentOnOil,
@@ -559,11 +588,11 @@ export function InsightsModule({
       totalSpentOnCar,
       reserveBalance,
       maintenancePercentage,
-      totalFuelValue30Days,
-      totalLiters30Days,
-      totalExpenses30Days
+      totalFuelValuePeriod,
+      totalLitersPeriod,
+      totalExpensesPeriod
     };
-  }, [shifts, expenses, fuelRecords, settings]);
+  }, [shifts, expenses, fuelRecords, settings, periodFilter, referenceDate]);
 
   const historyComparisonData = useMemo(() => {
     if (!shifts || shifts.length === 0) return null;
@@ -583,20 +612,49 @@ export function InsightsModule({
 
     let current, previous, average;
     let labelPrev = '', labelAvg = '';
+    let progressPct = 100;
+
+    const now = new Date();
+    const isCurrentPeriod = (type: 'week' | 'month') => {
+      if (type === 'week') return isSameWeek(now, referenceDate, { weekStartsOn: 1 });
+      return isSameMonth(now, referenceDate);
+    };
 
     if (periodFilter === 'week') {
       const currentShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), referenceDate, { weekStartsOn: 1 }));
       current = aggregateShifts(currentShifts);
 
+      const isCurrent = isCurrentPeriod('week');
+      // If it is the current week, we want to know what % of the week has passed
+      // Let's say day of week: 1 (Mon) to 7 (Sun)
+      const dayOfWeek = isCurrent ? now.getDay() || 7 : 7;
+      progressPct = isCurrent ? (dayOfWeek / 7) * 100 : 100;
+
       const prevWeekDate = subWeeks(referenceDate, 1);
-      const prevShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), prevWeekDate, { weekStartsOn: 1 }));
+      const prevShifts = shifts.filter(s => {
+        const d = ensureDate(s.startTime);
+        if (!isSameWeek(d, prevWeekDate, { weekStartsOn: 1 })) return false;
+        if (isCurrent) {
+          const shiftDay = d.getDay() || 7;
+          if (shiftDay > dayOfWeek) return false;
+        }
+        return true;
+      });
       previous = aggregateShifts(prevShifts);
-      labelPrev = 'Sema. Passada';
+      labelPrev = isCurrent ? `Mesmo período (Sem. Passada)` : 'Sema. Passada';
 
       let past4Rev = 0, past4Time = 0, past4Km = 0;
       for(let i=1; i<=4; i++) {
         const wDate = subWeeks(referenceDate, i);
-        const wShifts = shifts.filter(s => isSameWeek(ensureDate(s.startTime), wDate, { weekStartsOn: 1 }));
+        const wShifts = shifts.filter(s => {
+          const d = ensureDate(s.startTime);
+          if (!isSameWeek(d, wDate, { weekStartsOn: 1 })) return false;
+          if (isCurrent) {
+            const shiftDay = d.getDay() || 7;
+            if (shiftDay > dayOfWeek) return false;
+          }
+          return true;
+        });
         const agg = aggregateShifts(wShifts);
         past4Rev += agg.revenue;
         past4Time += agg.time;
@@ -609,20 +667,39 @@ export function InsightsModule({
         rph: past4Time > 0 ? past4Rev / (past4Time / 3600) : 0,
         rpkm: past4Km > 0 ? past4Rev / past4Km : 0
       };
-      labelAvg = 'Média das 4S Anteriores';
+      labelAvg = isCurrent ? 'Média Parcial (4 Semanas)' : 'Média das 4 Semanas Anteriores';
     } else {
       const currentShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), referenceDate));
       current = aggregateShifts(currentShifts);
 
+      const isCurrent = isCurrentPeriod('month');
+      const dayOfMonth = isCurrent ? now.getDate() : 31;
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      progressPct = isCurrent ? (dayOfMonth / daysInMonth) * 100 : 100;
+
       const prevMonthDate = subMonths(referenceDate, 1);
-      const prevShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), prevMonthDate));
+      const prevShifts = shifts.filter(s => {
+        const d = ensureDate(s.startTime);
+        if (!isSameMonth(d, prevMonthDate)) return false;
+        if (isCurrent) {
+           if (d.getDate() > dayOfMonth) return false;
+        }
+        return true;
+      });
       previous = aggregateShifts(prevShifts);
-      labelPrev = 'Mês Passado';
+      labelPrev = isCurrent ? `Mesmo período (Mês Passado)` : 'Mês Passado';
 
       let past3Rev = 0, past3Time = 0, past3Km = 0;
       for(let i=1; i<=3; i++) {
         const mDate = subMonths(referenceDate, i);
-        const mShifts = shifts.filter(s => isSameMonth(ensureDate(s.startTime), mDate));
+        const mShifts = shifts.filter(s => {
+          const d = ensureDate(s.startTime);
+          if (!isSameMonth(d, mDate)) return false;
+          if (isCurrent) {
+            if (d.getDate() > dayOfMonth) return false;
+          }
+          return true;
+        });
         const agg = aggregateShifts(mShifts);
         past3Rev += agg.revenue;
         past3Time += agg.time;
@@ -635,10 +712,10 @@ export function InsightsModule({
         rph: past3Time > 0 ? past3Rev / (past3Time / 3600) : 0,
         rpkm: past3Km > 0 ? past3Rev / past3Km : 0
       };
-      labelAvg = 'Média dos 3M Anteriores';
+      labelAvg = isCurrent ? 'Média Parcial (3 Meses)' : 'Média dos 3 Meses Anteriores';
     }
 
-    return { current, previous, average, labelPrev, labelAvg };
+    return { current, previous, average, labelPrev, labelAvg, progressPct };
   }, [shifts, periodFilter, referenceDate]);
 
   const handleHistoryAIAnalysis = async () => {
@@ -811,7 +888,7 @@ REGRAS CRÍTICAS:
             ))}
             <button 
               onClick={() => setShowComparisonModal(true)}
-              className="px-2 py-1.5 text-[10px] font-bold text-gray-400 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 transition-all active:scale-95 flex items-center gap-1"
+              className="px-2 py-1.5 text-xs font-bold text-gray-400 dark:text-gray-500 hover:text-green-600 dark:hover:text-green-400 transition-all active:scale-95 flex items-center gap-1"
             >
               <History size={14} />
               HISTÓRICO
@@ -873,6 +950,7 @@ REGRAS CRÍTICAS:
              periodFilter={periodFilter}
              historyComparisonData={historyComparisonData}
              hourlyData={hourlyData?.data || []}
+             settings={settings}
           />
           <WeekInsights 
              metrics={metrics}
@@ -881,6 +959,7 @@ REGRAS CRÍTICAS:
              chartsData={chartsData}
              periodFilter={periodFilter}
              historyComparisonData={historyComparisonData}
+             settings={settings}
           />
           <MonthInsights 
              metrics={metrics}
@@ -935,16 +1014,16 @@ REGRAS CRÍTICAS:
           </div>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Período de Análise</label>
+                <label className="text-xs uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Período de Análise</label>
                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-xl">
                   {(['day', 'week', 'month'] as const).map((f) => (
                     <button
                       key={f}
                       onClick={() => setAnalysisFilter(f)}
                       className={cn(
-                        "flex-1 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all",
+                        "flex-1 py-1.5 text-xs font-black uppercase tracking-wider rounded-lg transition-all",
                         analysisFilter === f ? "bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm" : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-400"
                       )}
                     >
@@ -955,7 +1034,7 @@ REGRAS CRÍTICAS:
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Referência</label>
+                <label className="text-xs uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Referência</label>
                 <input 
                   type="date" 
                   value={selectedAnalysisDate}
@@ -966,7 +1045,7 @@ REGRAS CRÍTICAS:
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-[10px] uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Sua Pergunta</label>
+              <label className="text-xs uppercase font-black tracking-widest text-gray-400 dark:text-gray-500 ml-1">Sua Pergunta</label>
               <textarea 
                 placeholder="Ex: Como foi minha semana? O que posso melhorar? Quais corridas foram ruins?"
                 value={analysisQuery}
@@ -995,7 +1074,7 @@ REGRAS CRÍTICAS:
           </div>
 
           <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
-            <p className="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest mb-2">Exemplos de perguntas:</p>
+            <p className="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase tracking-widest mb-2">Exemplos de perguntas:</p>
             <div className="flex flex-wrap gap-2">
               {[
                 "Como faturar mais?",
@@ -1006,7 +1085,7 @@ REGRAS CRÍTICAS:
                 <button
                   key={q}
                   onClick={() => setAnalysisQuery(q)}
-                  className="bg-gray-100 dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 text-[10px] font-bold py-1 px-3 rounded-lg text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-all"
+                  className="bg-gray-100 dark:bg-gray-800 hover:bg-green-50 dark:hover:bg-green-900/20 text-xs font-bold py-1 px-3 rounded-lg text-gray-500 dark:text-gray-400 hover:text-green-600 dark:hover:text-green-400 transition-all"
                 >
                   {q}
                 </button>
@@ -1020,7 +1099,7 @@ REGRAS CRÍTICAS:
         {historyComparisonData && historyComparisonData.current ? (
           <div className="space-y-6">
             <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-2xl flex flex-col gap-1 border border-gray-100 dark:border-gray-800">
-              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest text-center mb-4">Visão Geral: {periodRangeLabel.type}</p>
+              <p className="text-xs text-gray-500 font-bold uppercase tracking-widest text-center mb-4">Visão Geral: {periodRangeLabel.type}</p>
               
               <div className="grid grid-cols-1 gap-4">
                 <ComparisonCard 
@@ -1072,7 +1151,7 @@ REGRAS CRÍTICAS:
             
             {(periodFilter === 'week' && planningMetrics) && (
               <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-800/30 p-4 rounded-2xl">
-                 <p className="text-[10px] text-green-700 dark:text-green-400 font-black uppercase tracking-widest mb-2 flex items-center justify-between"><span>Progresso da Meta Mensal</span> <span>{Math.min(100, (planningMetrics.revenueSoFar / planningMetrics.revenueNeededTotal) * 100).toFixed(1)}%</span></p>
+                 <p className="text-xs text-green-700 dark:text-green-400 font-black uppercase tracking-widest mb-2 flex items-center justify-between"><span>Progresso da Meta Mensal</span> <span>{Math.min(100, (planningMetrics.revenueSoFar / planningMetrics.revenueNeededTotal) * 100).toFixed(1)}%</span></p>
                  <div className="w-full bg-green-200 dark:bg-green-900/40 h-2.5 rounded-full overflow-hidden shadow-inner">
                     <div 
                       className="h-full bg-green-500 transition-all duration-1000"
@@ -1095,7 +1174,7 @@ REGRAS CRÍTICAS:
               <Sparkles size={18} />
             </div>
             <div>
-              <p className="text-[10px] uppercase font-black tracking-widest text-green-600 dark:text-green-400">Análise Concluída</p>
+              <p className="text-xs uppercase font-black tracking-widest text-green-600 dark:text-green-400">Análise Concluída</p>
               <p className="text-xs text-green-800 dark:text-green-200 font-medium">
                 {analysisFilter === 'day' ? 'Relatório Diário' : analysisFilter === 'week' ? 'Relatório Semanal' : 'Relatório Mensal'}
               </p>

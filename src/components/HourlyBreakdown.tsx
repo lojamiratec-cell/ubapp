@@ -52,7 +52,7 @@ export function HourlyBreakdown({ shifts, shiftTrips, title = "Ganhos por Hora" 
 
   return (
     <div className="mt-2">
-      <h3 className="text-[10px] uppercase font-black text-gray-500 tracking-widest mb-3 flex items-center gap-2">
+      <h3 className="text-xs uppercase font-black text-gray-500 tracking-widest mb-3 flex items-center gap-2">
         <Clock size={12} /> {title}
       </h3>
       
@@ -75,7 +75,7 @@ export function HourlyBreakdown({ shifts, shiftTrips, title = "Ganhos por Hora" 
             <div key={data.hour} className="flex-1 flex flex-col items-center gap-2 group relative">
               
               {/* Tooltip on hover/touch */}
-              <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-[10px] p-2 rounded-xl pointer-events-none z-10 whitespace-nowrap shadow-xl">
+              <div className="absolute bottom-full mb-2 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-xs p-2 rounded-xl pointer-events-none z-10 whitespace-nowrap shadow-xl">
                 <p className="font-black mb-1">{String(data.hour).padStart(2, '0')}:00 - {String((data.hour + 1) % 24).padStart(2, '0')}:00</p>
                 <p className="font-bold flex justify-between gap-4"><span>Faturado:</span> <span>R$ {data.revenue.toFixed(2)}</span></p>
                 <p className="flex justify-between gap-4"><span>Média:</span> <span>R$ {data.rph.toFixed(0)}/h</span></p>
@@ -87,14 +87,14 @@ export function HourlyBreakdown({ shifts, shiftTrips, title = "Ganhos por Hora" 
                 className={cn("w-full rounded-t-sm transition-all duration-500 hover:opacity-80", colorClass)} 
                 style={{ height: `${heightPct}%` }}
               />
-              <span className="text-[8px] font-black text-gray-400">{String(data.hour).padStart(2, '0')}h</span>
+              <span className="text-xs font-black text-gray-400">{String(data.hour).padStart(2, '0')}h</span>
             </div>
           );
         })}
       </div>
       
       <div className="flex justify-between items-center mt-4 border-t border-gray-100 dark:border-white/5 pt-3">
-         <div className="flex items-center gap-2 text-[9px] font-bold text-gray-500 uppercase tracking-widest">
+         <div className="flex items-center gap-2 text-[11px] font-bold text-gray-500 uppercase tracking-widest">
             <span>Temperatura:</span>
             <span className="w-2 h-2 rounded-full bg-gray-200 dark:bg-gray-800" /> Frio
             <span className="w-2 h-2 rounded-full bg-yellow-500 ml-1" /> Morno
